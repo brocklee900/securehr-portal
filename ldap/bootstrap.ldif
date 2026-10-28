@@ -23,7 +23,7 @@ cn: Bob Manager
 sn: Manager
 givenName: Bob
 mail: bob.manager@securehr.local
-employeeNumber: 110022
+employeeNumber: 110039
 userPassword: Passw0rd!
 
 dn: uid=carol.employee,ou=people,dc=securehr,dc=local
