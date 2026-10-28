@@ -1,0 +1,8 @@
+LOAD DATABASE
+  FROM      {{MYSQL_URI}}
+  INTO      {{PG_URI}}
+
+WITH include drop, create tables, create indexes, reset sequences, foreign keys
+
+ALTER SCHEMA 'employees' RENAME TO 'hr'
+;

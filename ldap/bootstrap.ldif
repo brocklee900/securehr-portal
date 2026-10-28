@@ -1,0 +1,54 @@
+# Demo directory. Passwords are for local dev only (all "Passw0rd!").
+dn: ou=people,dc=securehr,dc=local
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=securehr,dc=local
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=alice.hr,ou=people,dc=securehr,dc=local
+objectClass: inetOrgPerson
+uid: alice.hr
+cn: Alice HR
+sn: HR
+givenName: Alice
+mail: alice.hr@securehr.local
+userPassword: Passw0rd!
+
+dn: uid=bob.manager,ou=people,dc=securehr,dc=local
+objectClass: inetOrgPerson
+uid: bob.manager
+cn: Bob Manager
+sn: Manager
+givenName: Bob
+mail: bob.manager@securehr.local
+employeeNumber: 110022
+userPassword: Passw0rd!
+
+dn: uid=carol.employee,ou=people,dc=securehr,dc=local
+objectClass: inetOrgPerson
+uid: carol.employee
+cn: Carol Employee
+sn: Employee
+givenName: Carol
+mail: carol.employee@securehr.local
+employeeNumber: 10001
+userPassword: Passw0rd!
+
+dn: cn=hr-admins,ou=groups,dc=securehr,dc=local
+objectClass: groupOfNames
+cn: hr-admins
+member: uid=alice.hr,ou=people,dc=securehr,dc=local
+
+dn: cn=managers,ou=groups,dc=securehr,dc=local
+objectClass: groupOfNames
+cn: managers
+member: uid=bob.manager,ou=people,dc=securehr,dc=local
+
+dn: cn=employees,ou=groups,dc=securehr,dc=local
+objectClass: groupOfNames
+cn: employees
+member: uid=carol.employee,ou=people,dc=securehr,dc=local
+member: uid=bob.manager,ou=people,dc=securehr,dc=local
+member: uid=alice.hr,ou=people,dc=securehr,dc=local

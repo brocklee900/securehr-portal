@@ -1,0 +1,131 @@
+name: securehr
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  # ---------- Data ----------
+  postgres:
+    <<: *restart
+    image: postgres:16
+    environment:
+      POSTGRES_DB: employees
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PORTAL_APP_PASSWORD: ${PORTAL_APP_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d employees"]
+      interval: 5s
+      retries: 10
+
+  # Source DB for the one-time migration (only started with --profile migration)
+  mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password   # pgloader can't use caching_sha2_password
+    profiles: ["migration"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysqldata:/var/lib/mysql
+      - ./db/test_db:/test_db:ro   # git clone https://github.com/datacharmer/test_db db/test_db
+    ports: ["127.0.0.1:3306:3306"]
+
+  # ---------- Identity ----------
+  ldap:
+    <<: *restart
+    image: osixia/openldap:1.5.0
+    environment:
+      LDAP_ORGANISATION: SecureHR
+      LDAP_DOMAIN: securehr.local
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+    command: --copy-service
+    volumes:
+      - ./ldap/bootstrap.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/50-bootstrap.ldif:ro
+      - ldapdata:/var/lib/ldap
+      - ldapconf:/etc/ldap/slapd.d
+
+  keycloak-db:
+    <<: *restart
+    image: postgres:16
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+    volumes: [kcdata:/var/lib/postgresql/data]
+
+  keycloak:
+    <<: *restart
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]   # switch to `start` + real certs for staging
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HOSTNAME: https://auth.localhost
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      JENKINS_OIDC_SECRET: ${JENKINS_OIDC_SECRET}
+    volumes:
+      - ./keycloak/securehr-realm.json:/opt/keycloak/data/import/securehr-realm.json:ro
+    depends_on: [keycloak-db, ldap]
+
+  # ---------- App ----------
+  backend:
+    <<: *restart
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://portal_app:${PORTAL_APP_PASSWORD}@postgres:5432/employees
+      OIDC_ISSUER: https://auth.localhost/realms/securehr
+      OIDC_JWKS_URL: http://keycloak:8080/realms/securehr/protocol/openid-connect/certs
+      OIDC_AUDIENCE: securehr-portal
+      CORS_ORIGINS: '["https://portal.localhost"]'
+    depends_on:
+      postgres: { condition: service_healthy }
+      keycloak: { condition: service_started }
+
+  frontend:
+    <<: *restart
+    build: ./frontend
+    volumes:
+      - ./frontend/src:/app/src
+
+  # ---------- Edge ----------
+  nginx:
+    <<: *restart
+    image: nginx:1.27-alpine
+    ports: ["443:443", "80:80"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on: [backend, frontend, keycloak, jenkins]
+    networks:
+      default:
+        aliases: [auth.localhost]   # lets containers reach Keycloak via the public name
+
+  # ---------- CI/CD ----------
+  jenkins:
+    <<: *restart
+    build: ./jenkins
+    environment:
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc.yaml
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD}
+      JENKINS_OIDC_SECRET: ${JENKINS_OIDC_SECRET}
+    volumes:
+      - jenkinshome:/var/jenkins_home
+      - ./jenkins/casc.yaml:/var/jenkins_home/casc.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock   # staging only; see docs/ARCHITECTURE.md
+
+volumes:
+  pgdata:
+  mysqldata:
+  kcdata:
+  ldapdata:
+  ldapconf:
+  jenkinshome:

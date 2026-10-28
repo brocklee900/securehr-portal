@@ -1,0 +1,61 @@
+{
+  "realm": "securehr",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      { "name": "employee",  "description": "Basic directory access" },
+      { "name": "manager",   "description": "Own department incl. salary" },
+      { "name": "hr_admin",  "description": "Full access" }
+    ]
+  },
+  "groups": [
+    { "name": "hr-admins",  "realmRoles": ["hr_admin"] },
+    { "name": "managers",   "realmRoles": ["manager"] },
+    { "name": "employees",  "realmRoles": ["employee"] }
+  ],
+  "clients": [
+    {
+      "clientId": "securehr-portal",
+      "name": "SecureHR Portal (SPA)",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["https://portal.localhost/*"],
+      "webOrigins": ["https://portal.localhost"],
+      "attributes": { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "https://portal.localhost/*" },
+      "protocolMappers": [
+        {
+          "name": "aud-securehr-portal",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "securehr-portal", "access.token.claim": "true", "id.token.claim": "false" }
+        },
+        {
+          "name": "emp_no",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": { "user.attribute": "emp_no", "claim.name": "emp_no", "jsonType.label": "int", "access.token.claim": "true", "id.token.claim": "true" }
+        }
+      ]
+    },
+    {
+      "clientId": "jenkins",
+      "name": "Jenkins",
+      "publicClient": false,
+      "secret": "${JENKINS_OIDC_SECRET}",
+      "standardFlowEnabled": true,
+      "redirectUris": ["https://jenkins.localhost/securityRealm/finishLogin"],
+      "webOrigins": ["https://jenkins.localhost"]
+    }
+  ],
+  "users": [
+    { "username": "admin.local", "enabled": true, "email": "admin.local@securehr.local",
+      "firstName": "Fallback", "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "Passw0rd!", "temporary": true }],
+      "groups": ["/hr-admins"],
+      "attributes": { "emp_no": ["10002"] } }
+  ]
+}
