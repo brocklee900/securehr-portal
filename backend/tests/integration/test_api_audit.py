@@ -56,3 +56,21 @@ def test_filters_paging_and_order(client, hr):
 
 def test_page_size_is_capped(client, hr):
     assert audit(client, hr, page_size=201).status_code == 422
+
+
+def test_denied_requests_are_audited(client, hr):
+    name = unique("it.denied")
+    user = bearer(make_token(name, ["employee"]))
+    assert client.get("/employees/10001/salaries", headers=user).status_code == 403
+    assert client.get("/audit", headers=user).status_code == 403
+    rows = audit(client, hr, username=name, action="denied").json()["items"]
+    assert {r["resource"] for r in rows} == {"employees/10001/salaries", "audit"}
+    row = next(r for r in rows if r["resource"] == "audit")
+    assert row["role"] == "employee" and row["detail"]["required"] == ["hr_admin"] and row["detail"]["method"] == "GET"
+
+
+def test_user_without_a_portal_role_is_audited_as_none(client, hr):
+    name = unique("it.norole")
+    assert client.get("/me", headers=bearer(make_token(name, []))).status_code == 403
+    rows = audit(client, hr, username=name).json()["items"]
+    assert [(r["action"], r["role"], r["detail"]["reason"]) for r in rows] == [("denied", "none", "no portal role")]

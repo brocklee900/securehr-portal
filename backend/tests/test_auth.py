@@ -1,3 +1,6 @@
+from contextlib import nullcontext
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -5,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.auth import User, require_role, user_from_claims
 from app.main import app
 
+REQ = SimpleNamespace(method="GET", url=SimpleNamespace(path="/audit"))
 client = TestClient(app)  # lifespan not started -> no DB needed
 
 
@@ -34,13 +38,36 @@ def test_no_role_forbidden():
     assert e.value.status_code == 403
 
 
-def test_require_role_blocks_manager():
-    dep = require_role("hr_admin")
+def test_require_role_blocks_manager_and_audits_the_denial(monkeypatch):
+    import app.db as db
+
+    calls = []
+
+    def fake_session(*args):
+        calls.append(args)
+        return nullcontext()
+
+    monkeypatch.setattr(db, "session", fake_session)
     with pytest.raises(HTTPException) as e:
-        dep(User("1", "bob", "manager", 5))
+        require_role("hr_admin")(REQ, User("1", "bob", "manager", 5))
     assert e.value.status_code == 403
+    (user, action, resource, detail), = calls
+    assert (user.username, action, resource) == ("bob", "denied", "audit")
+    assert detail == {"method": "GET", "reason": "insufficient role", "required": ["hr_admin"]}
 
 
 def test_require_role_allows_hr_admin():
     hr = User("2", "alice", "hr_admin", None)
-    assert require_role("hr_admin")(hr) is hr
+    assert require_role("hr_admin")(REQ, hr) is hr
+
+
+def test_denial_stays_403_even_if_the_audit_write_fails(monkeypatch):
+    import app.db as db
+
+    def boom(*_a, **_k):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(db, "session", boom)
+    with pytest.raises(HTTPException) as e:
+        require_role("hr_admin")(REQ, User("1", "bob", "manager", 5))
+    assert e.value.status_code == 403

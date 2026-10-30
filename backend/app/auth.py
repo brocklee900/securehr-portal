@@ -1,13 +1,15 @@
 """OIDC bearer-token validation + role extraction (Keycloak realm roles)."""
+import logging
 from dataclasses import dataclass
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import settings
 
 ROLE_ORDER = ("hr_admin", "manager", "employee")  # highest privilege first
+log = logging.getLogger("securehr.audit")
 _bearer = HTTPBearer(auto_error=False)
 _jwks = jwt.PyJWKClient(settings.oidc_jwks_url, cache_keys=True)
 
@@ -39,7 +41,21 @@ def user_from_claims(claims: dict) -> User:
                 int(emp) if emp is not None else None)
 
 
-def current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> User:
+def _audit_denied(request: Request, user: User, reason: str, required: tuple[str, ...] = ()) -> None:
+    """Record a request from a logged-in user that was refused. An audit failure must never change the response."""
+    try:
+        from .db import session  # imported here because db.py imports this module
+
+        detail: dict = {"method": request.method, "reason": reason}
+        if required:
+            detail["required"] = list(required)
+        with session(user, "denied", request.url.path.lstrip("/"), detail):
+            pass
+    except Exception:  # noqa: BLE001
+        log.warning("could not write audit entry for a denied request", exc_info=True)
+
+
+def current_user(request: Request, creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> User:
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token",
                             headers={"WWW-Authenticate": "Bearer"})
@@ -48,12 +64,18 @@ def current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) 
     except jwt.PyJWTError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Invalid token: {exc.__class__.__name__}",
                             headers={"WWW-Authenticate": "Bearer"}) from exc
-    return user_from_claims(claims)
+    try:
+        return user_from_claims(claims)
+    except HTTPException:
+        sub = claims["sub"]
+        _audit_denied(request, User(sub, claims.get("preferred_username", sub), "none", None), "no portal role")
+        raise
 
 
 def require_role(*allowed: str):
-    def dep(user: User = Depends(current_user)) -> User:
+    def dep(request: Request, user: User = Depends(current_user)) -> User:
         if user.role not in allowed:
+            _audit_denied(request, user, "insufficient role", allowed)
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role")
         return user
     return dep

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, AuditRow } from "../api";
 
-const ACTIONS = ["", "search", "read", "list"];
+const ACTIONS = ["", "search", "read", "list", "denied"];
 
 export default function Audit() {
   const [username, setUsername] = useState("");

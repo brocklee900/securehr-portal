@@ -10,7 +10,6 @@ jenkins:
       userNameField: preferred_username
       groupsFieldName: roles
       logoutFromOpenidProvider: true
-      rootURLFromRequest: true
   authorizationStrategy:
     roleBased:
       roles:
