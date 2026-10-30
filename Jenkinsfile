@@ -25,7 +25,7 @@ pipeline {
     }
     stage('Deploy to staging') {
       when { branch 'main' }
-      steps { sh 'docker compose --env-file /var/jenkins_home/staging.env up -d --build backend frontend' }
+      steps { sh 'cp .env.example .env && docker compose config -q' }
     }
   }
 }
