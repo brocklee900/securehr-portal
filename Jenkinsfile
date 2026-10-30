@@ -1,6 +1,6 @@
 pipeline {
   agent any
-  options { timestamps(); disableConcurrentBuilds() }
+  options { disableConcurrentBuilds() }
   environment { COMPOSE_PROJECT_NAME = 'securehr-staging' }
 
   stages {
