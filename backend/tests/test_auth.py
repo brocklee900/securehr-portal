@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from app.auth import user_from_claims
+from app.auth import User, require_role, user_from_claims
 from app.main import app
 
 client = TestClient(app)  # lifespan not started -> no DB needed
@@ -32,3 +32,15 @@ def test_no_role_forbidden():
     with pytest.raises(HTTPException) as e:
         user_from_claims({"sub": "1", "realm_access": {"roles": ["offline_access"]}})
     assert e.value.status_code == 403
+
+
+def test_require_role_blocks_manager():
+    dep = require_role("hr_admin")
+    with pytest.raises(HTTPException) as e:
+        dep(User("1", "bob", "manager", 5))
+    assert e.value.status_code == 403
+
+
+def test_require_role_allows_hr_admin():
+    hr = User("2", "alice", "hr_admin", None)
+    assert require_role("hr_admin")(hr) is hr

@@ -1,5 +1,6 @@
 import { Link, Route, Routes } from "react-router-dom";
 import { currentRole, keycloak } from "./auth";
+import Audit from "./pages/Audit";
 import Departments from "./pages/Departments";
 import EmployeeDetail from "./pages/EmployeeDetail";
 import EmployeeSearch from "./pages/EmployeeSearch";
@@ -12,6 +13,7 @@ export default function App() {
         <strong>SecureHR</strong>
         <Link to="/">Employees</Link>
         <Link to="/departments">Departments</Link>
+        {role === "hr_admin" && <Link to="/audit">Audit log</Link>}
         <span style={{ marginLeft: "auto" }}>
           {keycloak.tokenParsed?.preferred_username} ({role}){" "}
           <button onClick={() => keycloak.logout({ redirectUri: window.location.origin })}>Sign out</button>
@@ -21,6 +23,7 @@ export default function App() {
         <Route path="/" element={<EmployeeSearch />} />
         <Route path="/employees/:id" element={<EmployeeDetail role={role} />} />
         <Route path="/departments" element={<Departments />} />
+        <Route path="/audit" element={role === "hr_admin" ? <Audit /> : <p>Not authorized.</p>} />
       </Routes>
     </div>
   );

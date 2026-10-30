@@ -7,6 +7,10 @@ export interface EmployeeRow {
 export interface Page<T> { items: T[]; total: number; page: number; page_size: number }
 export interface Department { dept_no: string; dept_name: string; headcount: number }
 export interface Salary { salary: number; from_date: string; to_date: string }
+export interface AuditRow {
+  id: number; at: string; username: string; role: string;
+  action: string; resource: string; detail: Record<string, unknown>;
+}
 export interface Title { title: string; from_date: string; to_date: string }
 
 async function get<T>(path: string): Promise<T> {
@@ -22,6 +26,8 @@ export const api = {
   employee: (id: string) => get<EmployeeRow & { gender?: string; birth_date?: string }>(`/employees/${id}`),
   titles: (id: string) => get<Title[]>(`/employees/${id}/titles`),
   salaries: (id: string) => get<Salary[]>(`/employees/${id}/salaries`),
+  audit: (username: string, action: string, page: number) =>
+    get<Page<AuditRow>>(`/audit?page=${page}&page_size=50${username ? `&username=${encodeURIComponent(username)}` : ""}${action ? `&action=${encodeURIComponent(action)}` : ""}`),
   departments: () => get<Department[]>("/departments"),
   department: (no: string) => get<{ dept_no: string; dept_name: string; managers: { emp_no: number; first_name: string; last_name: string }[] }>(`/departments/${no}`),
 };
