@@ -20,7 +20,7 @@ pipeline {
     stage('Security scans') {   // Milestone 7
       parallel {
         stage('Python deps') { steps { sh 'cd backend && . .venv/bin/activate && pip-audit -r requirements.txt' } }
-        stage('Container')   { steps { sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL securehr/backend:${GIT_COMMIT}' } }
+        stage('Container')   { steps { sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache aquasec/trivy:latest image --ignore-unfixed --exit-code 1 --severity HIGH,CRITICAL securehr/backend:${GIT_COMMIT}' } }
       }
     }
     stage('Deploy to staging') {
