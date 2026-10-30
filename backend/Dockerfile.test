@@ -1,0 +1,8 @@
+# Test image used by scripts/run_integration_tests.sh (unit + integration tests).
+FROM python:3.12-slim
+WORKDIR /srv
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
+COPY . .
+ENV RUN_INTEGRATION=1
+CMD ["pytest", "-q", "tests", "--junitxml=/tmp/integration.xml"]

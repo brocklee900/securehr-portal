@@ -16,3 +16,5 @@ db/test_db/
 jenkins/rootCA.pem
 scripts/mkcert.exe
 .venv/
+backend/integration-report.xml
+backend/report.xml
