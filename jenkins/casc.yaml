@@ -4,28 +4,31 @@ jenkins:
     oic:
       clientId: jenkins
       clientSecret: ${JENKINS_OIDC_SECRET}
-      wellKnownOpenIDConfigurationUrl: https://auth.localhost/realms/securehr/.well-known/openid-configuration
+      serverConfiguration:
+        wellKnown:
+          wellKnownOpenIDConfigurationUrl: https://auth.localhost/realms/securehr/.well-known/openid-configuration
       userNameField: preferred_username
-      groupsFieldName: realm_access.roles
+      groupsFieldName: roles
       logoutFromOpenidProvider: true
+      rootURLFromRequest: true
   authorizationStrategy:
     roleBased:
       roles:
         global:
           - name: admin
-            permissions: [Overall/Administer]
-            entries: [{ group: hr_admin }]
+            permissions:
+              - Overall/Administer
+            entries:
+              - group: hr_admin
+              - user: alice.hr
           - name: dev
-            permissions: [Overall/Read, Job/Build, Job/Read]
-            entries: [{ group: manager }, { group: employee }]
+            permissions:
+              - Overall/Read
+              - Job/Build
+              - Job/Read
+            entries:
+              - group: manager
+              - group: employee
 unclassified:
   location:
     url: https://jenkins.localhost/
-jobs:
-  - script: >
-      multibranchPipelineJob('securehr-portal') {
-        branchSources {
-          git { id('securehr'); remote('https://github.com/YOUR-ORG/securehr-portal.git') }
-        }
-        triggers { periodic(60) }   // fallback; primary trigger is the GitHub webhook -> https://jenkins.localhost/github-webhook/
-      }

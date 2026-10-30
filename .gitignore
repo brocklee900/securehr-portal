@@ -9,4 +9,10 @@ node_modules/
 dist/
 *.pyc
 scripts/mkcert.exe
+db/test_db/jenkins/rootCA.pem
+
+.vs/
 db/test_db/
+jenkins/rootCA.pem
+scripts/mkcert.exe
+.venv/
