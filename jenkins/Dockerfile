@@ -6,9 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY rootCA.pem /usr/local/share/ca-certificates/securehr-rootCA.crt
-RUN keytool -importcert -noprompt -trustcacerts -alias securehr-local-ca \
+RUN update-ca-certificates \
+ && keytool -importcert -noprompt -trustcacerts -alias securehr-local-ca \
       -file /usr/local/share/ca-certificates/securehr-rootCA.crt \
       -keystore "$JAVA_HOME/lib/security/cacerts" -storepass changeit
 USER jenkins
-RUN jenkins-plugin-cli --plugins configuration-as-code git workflow-aggregator github oic-auth role-strategy junit
+RUN jenkins-plugin-cli --plugins configuration-as-code git workflow-aggregator github oic-auth role-strategy junit gitea
 ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false"

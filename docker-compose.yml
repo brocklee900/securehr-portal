@@ -104,10 +104,35 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
-    depends_on: [backend, frontend, keycloak, jenkins]
+    depends_on: [backend, frontend, keycloak, jenkins, gitea]
     networks:
       default:
-        aliases: [auth.localhost]   # lets containers reach Keycloak via the public name
+        aliases: [auth.localhost, gitea.localhost, jenkins.localhost]   # lets containers (Jenkins, Gitea) reach each other via the public names
+
+  # ---------- Git server ----------
+  gitea:
+    <<: *restart
+    build: ./gitea   # official image + the local mkcert CA, so Gitea can call Keycloak and Jenkins over HTTPS
+    environment:
+      GITEA__server__ROOT_URL: https://gitea.localhost/
+      GITEA__server__DISABLE_SSH: "true"                  # HTTPS only; no extra port to publish
+      GITEA__database__DB_TYPE: sqlite3                   # demo scale; data lives in the giteadata volume
+      GITEA__security__INSTALL_LOCK: "true"               # skip the web installer
+      GITEA__security__SECRET_KEY: ${GITEA_SECRET_KEY}
+      GITEA__security__ALLOWED_HOST_LIST: private         # Gitea 28+: webhooks to Jenkins and OIDC calls to Keycloak resolve to Docker-network addresses
+      GITEA__service__REQUIRE_SIGNIN_VIEW: "true"         # nothing is visible without signing in
+      GITEA__service__ALLOW_ONLY_EXTERNAL_REGISTRATION: "true"   # accounts are created only by Keycloak sign-in
+      GITEA__service__SHOW_REGISTRATION_BUTTON: "false"
+      GITEA__service__DEFAULT_USER_IS_RESTRICTED: "true"  # new SSO users see nothing until given access; hr_admin is promoted to admin by claim
+      GITEA__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
+      GITEA__repository__DEFAULT_PRIVATE: private
+      GITEA_OIDC_SECRET: ${GITEA_OIDC_SECRET}             # read by scripts/setup-gitea.sh inside the container (keeps it off the host command line)
+    volumes:
+      - giteadata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz >/dev/null || exit 1"]
+      interval: 10s
+      retries: 12
 
   # ---------- CI/CD ----------
   jenkins:
@@ -129,3 +154,4 @@ volumes:
   ldapdata:
   ldapconf:
   jenkinshome:
+  giteadata:

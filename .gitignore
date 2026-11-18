@@ -18,3 +18,4 @@ scripts/mkcert.exe
 .venv/
 backend/integration-report.xml
 backend/report.xml
+gitea/rootCA.pem

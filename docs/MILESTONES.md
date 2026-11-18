@@ -13,7 +13,7 @@
 | 9 | Final demo, presentation, project report | Dec 1 | Not started |
 
 ## Remaining work, in suggested order
-1. **Git server SSO + webhooks** (required by the abstract): Gitea in compose, OIDC login via Keycloak, webhook to Jenkins.
+1. **Git server SSO + webhooks** (required by the abstract): **implemented, awaiting verification.** Gitea is in compose with Keycloak OIDC login (`scripts/setup-gitea.sh`) and Jenkins webhooks over the Docker network; follow README step 7 and confirm a push starts a build before ticking it off.
 2. **Quick security follow-ups:** restrict Jenkins builds to HR admins, `npm audit` in CI, Nginx rate limit.
 3. **Evidence for the report:** screenshots of each role's view, audit log, green pipeline; search timing on the full dataset; test and scan output.
 4. **Demo script and slides.**

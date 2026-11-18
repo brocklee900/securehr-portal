@@ -2,12 +2,13 @@
 
 A proof-of-concept enterprise HR portal with single sign-on, role-based access and an automated delivery pipeline.
 
-**React/TypeScript** → **FastAPI** → **PostgreSQL** (row-level security + audit log), identity via **Keycloak** (OIDC) federated to **OpenLDAP**, TLS via **Nginx**, CI/CD via **GitHub + Jenkins** (Jenkins signs in through the same Keycloak SSO).
+**React/TypeScript** → **FastAPI** → **PostgreSQL** (row-level security + audit log), identity via **Keycloak** (OIDC) federated to **OpenLDAP**, TLS via **Nginx**, source control via **Gitea** and CI/CD via **Jenkins** (Gitea and Jenkins both sign in through the same Keycloak SSO; Gitea webhooks trigger Jenkins builds).
 
 ```
 Browser ──TLS──> Nginx ─┬─ portal.localhost  → React (Vite) ──┐ OIDC (auth code + PKCE)
                         │                      /api/ → FastAPI ── Postgres (schema hr, RLS; app.audit_log)
                         ├─ auth.localhost    → Keycloak ── LDAP (users + groups)
+                        ├─ gitea.localhost   → Gitea (OIDC login) ──webhook──> Jenkins
                         └─ jenkins.localhost → Jenkins (OIDC login) ── runs lint, tests, scans in Docker
 ```
 
@@ -39,6 +40,8 @@ cp .env.example .env              # then change every change-me-... value
 bash scripts/gen-certs.sh         # creates nginx/certs/securehr.pem and securehr-key.pem
 cp "$(mkcert -CAROOT)/rootCA.pem" jenkins/rootCA.pem
 ```
+Already have certificates from an earlier setup? Re-run `bash scripts/gen-certs.sh` (it now also covers `gitea.localhost`; your CA stays the same) and `docker compose restart nginx`.
+
 Avoid `@ : / # %` in passwords (they end up in connection URLs). The last line lets Jenkins trust your local certificate; the file is machine-specific and git-ignored. On Windows, if `mkcert` isn't on your PATH: `cp ~/AppData/Local/mkcert/rootCA.pem jenkins/rootCA.pem`.
 
 ### 2. Migrate the sample data (MySQL to PostgreSQL)
@@ -118,6 +121,38 @@ Bob's LDAP `employeeNumber` is `110039`, a **current** manager of `d001`. Row-le
 docker compose exec postgres psql -U postgres -d employees -c "SELECT dept_no, emp_no FROM hr.dept_manager WHERE to_date='9999-01-01' ORDER BY 1;"
 ```
 
+### 7. Git server (Gitea) with SSO and webhooks
+
+Gitea replaces GitHub as the Git server so that source control signs in through the same Keycloak as everything else, and so it can call Jenkins over the Docker network (no public address needed for webhooks).
+
+**7a. One command** (safe to re-run; does not touch the database):
+```bash
+export MSYS_NO_PATHCONV=1
+bash scripts/gen-certs.sh && docker compose restart nginx     # only if your certificate predates gitea.localhost
+bash scripts/setup-gitea.sh
+docker compose exec -u root jenkins chmod 666 /var/run/docker.sock   # Jenkins was rebuilt, see step 5
+```
+The script adds `GITEA_SECRET_KEY` and `GITEA_OIDC_SECRET` to `.env`, starts the stack, creates the `gitea` client in the **securehr** realm (with a `roles` claim) and registers Keycloak as Gitea's login source. Users with the `hr_admin` role become Gitea site admins; everyone else gets a restricted account with no access until an admin grants it.
+
+**7b. Sign in.** Open https://gitea.localhost → **Sign in with keycloak** as `alice.hr`. You should see **Site Administration** in the user menu. (Private window per login, as in step 6.)
+
+**7c. Create the repository and push.** In Gitea create an empty private repository `securehr-portal` under `alice.hr`. Accounts are SSO-only, so Git over HTTPS uses a token as the password: Settings → Applications → generate a token with repository read/write, organization read and user read. Then:
+```bash
+git remote add gitea https://gitea.localhost/alice.hr/securehr-portal.git
+git push gitea main            # username alice.hr, password = the token
+```
+If Git reports an unknown certificate authority: `git config http.sslCAInfo "$(mkcert -CAROOT)/rootCA.pem"` (on Windows `cp ~/AppData/Local/mkcert/rootCA.pem` as in step 1 if `mkcert` is not on your PATH).
+
+**7d. Connect Jenkins** (https://jenkins.localhost, as `alice.hr`):
+1. Manage Jenkins → Credentials → System → Global → Add credentials → Kind **Gitea Personal Access Token**, ID `gitea-token`, paste the token from 7c.
+2. Manage Jenkins → System → **Gitea Servers** → Add: Name `gitea`, Server URL `https://gitea.localhost`, Credentials `gitea-token`, **Manage hooks** ticked → Save.
+3. Open the `securehr-portal` job → Configure → Branch Sources: replace the GitHub source with **Gitea** (server `gitea`, credentials `gitea-token`, owner `alice.hr`, repository `securehr-portal`) → Save. (Or create a new Multibranch Pipeline with that source.)
+4. Jenkins scans, builds `main`, and registers a webhook in the repository for you.
+
+**7e. Check it works.** Push a small commit (`git push gitea main`). A build should start within seconds without clicking *Build Now*. In Gitea, repository → Settings → Webhooks shows the Jenkins hook with a green delivery; the commit shows a build status. A signed-in `bob.manager` or `carol.employee` gets an account with no repositories.
+
+**Manual Keycloak client** (only if the script could not reach Keycloak's admin API): in the **securehr** realm, Clients → Create: ID `gitea`, Client authentication **On**, Standard flow only, Valid redirect URI `https://gitea.localhost/user/oauth2/keycloak/callback`; Credentials tab secret = `GITEA_OIDC_SECRET` from `.env`; Client scopes → `gitea-dedicated` → Add mapper → By configuration → **User Realm Role**: Name `roles`, Token Claim Name `roles`, Multivalued On, Add to ID token / access token / userinfo On. Then re-run the script (it skips what exists).
+
 ### Stopping and resuming
 Data lives in Docker volumes and survives restarts.
 ```bash
@@ -162,6 +197,11 @@ The same script runs as the **Integration tests** stage in Jenkins (results publ
 | Build: `Invalid option type` or `expecting '}'` in the Jenkinsfile | A plugin is missing from `jenkins/Dockerfile`, or the file was damaged by pasting. Check braces: `grep -o '{' Jenkinsfile \| wc -l` equals `grep -o '}' Jenkinsfile \| wc -l`. |
 | Integration script: `Postgres did not start` | Docker Desktop not running or out of resources; the script prints the container log. |
 | pgloader cannot log in to MySQL | pgloader cannot use MySQL 8's default auth; compose pins `mysql:8.0` with `mysql_native_password`. |
+| Gitea sign-in: `x509: certificate signed by unknown authority` | `gitea/rootCA.pem` was missing or stale when the image was built: `cp jenkins/rootCA.pem gitea/rootCA.pem && docker compose up -d --build gitea`. |
+| Gitea sign-in loops back or says the OAuth2 request failed | The redirect URI or secret differs from the Keycloak `gitea` client. Re-run `bash scripts/setup-gitea.sh` (it re-syncs both). |
+| Signed in to Gitea but alice is not an admin | The `roles` claim is missing: Keycloak → Clients → `gitea` → Client scopes → `gitea-dedicated` must contain the `roles` mapper, and alice must have the `hr_admin` role (step 4d). Emergency admin: `docker compose exec -u git gitea gitea admin user create --admin --username localadmin --random-password --email localadmin@securehr.local`. |
+| Gitea webhook shows `denied by egress policy` | Gitea 28 only allows webhooks to private addresses listed in `[security] ALLOWED_HOST_LIST` (compose sets `private`). Check `docker compose exec gitea env \| grep ALLOWED_HOST` and that `jenkins.localhost` resolves from the Gitea container. |
+| Jenkins: `SSL peer unverified` / git clone fails on `gitea.localhost` | Jenkins image predates this change. `docker compose up -d --build jenkins`, then the `chmod 666` command from step 5. |
 
 ---
 
@@ -172,11 +212,12 @@ The same script runs as the **Integration tests** stage in Jenkins (results publ
 | `docker-compose.yml`, `.env.example` | Full stack |
 | `db/init/` | First-start Postgres setup: app role, `app.audit_log` |
 | `db/post/` | After migration: indexes and RLS (`02_`), audit-log access rules (`03_`), pgloader config |
-| `scripts/` | Certificates, migration, validation, integration tests |
+| `scripts/` | Certificates, migration, validation, integration tests, Gitea/Keycloak setup (`setup-gitea.sh`) |
 | `ldap/bootstrap.ldif`, `keycloak/` | Demo directory, realm import file, federation guide |
 | `nginx/` | TLS reverse proxy |
 | `backend/` | FastAPI app (`app/`), unit tests, integration tests (`tests/integration/`), `Dockerfile`, `Dockerfile.test` |
 | `frontend/` | React/TS: login, search, detail, departments, audit log |
+| `gitea/` | Gitea image (official image plus the local CA); configured by environment variables in `docker-compose.yml` |
 | `jenkins/`, `Jenkinsfile` | Jenkins image and config-as-code (OIDC login, roles); pipeline definition |
 | `docs/` | Architecture notes, milestone status, security review |
 
@@ -190,8 +231,8 @@ See `docs/SECURITY_REVIEW.md` for findings, fixes and accepted risks.
 - [x] Row-level security, audit logging (including denied requests), audit viewer
 - [x] Jenkins signs in through Keycloak; CI pipeline with lint, unit and integration tests, dependency and container scans
 - [x] 79 automated tests
-- [ ] GitHub (or Git server) sign-in through the same SSO
-- [ ] Webhook-triggered builds (needs a public address or a self-hosted Git server)
+- [ ] Git server sign-in through the same SSO: Gitea added and scripted (step 7); tick once verified end to end
+- [ ] Webhook-triggered builds: Gitea to Jenkins over the Docker network (step 7); tick once a push starts a build
 - [ ] Multi-factor authentication (not implemented; see security review)
 - [ ] Document repository stretch goal (not started)
 
