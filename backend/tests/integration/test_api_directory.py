@@ -1,3 +1,6 @@
+import pytest
+
+
 def last_names(items):
     return [i["last_name"] for i in items]
 
@@ -42,6 +45,50 @@ def test_department_filter_uses_current_department_only(client, emp):
     d2 = client.get("/employees", params={"dept_no": "d002"}, headers=emp).json()
     assert set(last_names(d1["items"])) == {"Facello", "Simmel", "Markovitch", "Minakawa"}
     assert set(last_names(d2["items"])) == {"Bamford", "Koblick", "Maliniak", "Legleitner"}   # Maliniak moved d001 -> d002
+
+
+@pytest.mark.parametrize("sort_by,ascending", [
+    ("name", [10003, 10001, 10004, 110114, 10005, 110022, 110039, 10002]),
+    ("title", [10004, 110114, 110022, 110039, 10003, 10005, 10001, 10002]),
+    ("department", [10003, 10004, 110114, 10005, 10001, 110022, 110039, 10002]),
+    ("hire_date", [110022, 110114, 10002, 110039, 10001, 10003, 10004, 10005]),
+])
+@pytest.mark.parametrize("sort_dir", ["asc", "desc"])
+def test_sorting_applies_to_all_pages(client, emp, sort_by, ascending, sort_dir):
+    employees = []
+    for page in (1, 2, 3):
+        response = client.get("/employees", headers=emp, params={
+            "sort_by": sort_by, "sort_dir": sort_dir, "page_size": 3, "page": page,
+        })
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 8
+        employees.extend(row["emp_no"] for row in body["items"])
+    assert employees == (ascending if sort_dir == "asc" else ascending[::-1])
+
+
+def test_sorting_preserves_search_and_department_filters(client, emp):
+    employees = []
+    for page in (1, 2):
+        response = client.get("/employees", headers=emp, params={
+            "q": "li", "dept_no": "d002", "sort_by": "hire_date", "sort_dir": "desc",
+            "page_size": 1, "page": page,
+        })
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 2
+        employees.extend(row["emp_no"] for row in body["items"])
+    assert employees == [10005, 10004]
+
+
+@pytest.mark.parametrize("params", [
+    {"sort_by": "salary"},
+    {"sort_by": "name; DROP TABLE hr.employees; --"},
+    {"sort_dir": "sideways"},
+    {"sort_dir": "desc; DROP TABLE hr.employees; --"},
+])
+def test_sorting_rejects_unsupported_values(client, emp, params):
+    assert client.get("/employees", headers=emp, params=params).status_code == 422
 
 
 def test_search_input_is_not_injectable(client, emp):

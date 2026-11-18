@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..auth import User, current_user, require_role
@@ -6,6 +8,12 @@ from ..db import session
 router = APIRouter(prefix="/employees", tags=["employees"])
 
 CURRENT = "9999-01-01"
+SORT_COLUMNS = {
+    "name": ("e.last_name", "e.first_name"),
+    "title": ("t.title", "e.last_name", "e.first_name"),
+    "department": ("d.dept_name", "e.last_name", "e.first_name"),
+    "hire_date": ("e.hire_date", "e.last_name", "e.first_name"),
+}
 
 
 @router.get("")
@@ -14,6 +22,8 @@ def search_employees(
     dept_no: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
+    sort_by: Literal["name", "title", "department", "hire_date"] = "name",
+    sort_dir: Literal["asc", "desc"] = "asc",
     user: User = Depends(current_user),
 ):
     where, params = [], {"cur": CURRENT, "limit": page_size, "offset": (page - 1) * page_size}
@@ -28,9 +38,13 @@ def search_employees(
       LEFT JOIN dept_emp de ON de.emp_no = e.emp_no AND de.to_date = %(cur)s
       LEFT JOIN departments d ON d.dept_no = de.dept_no
       LEFT JOIN titles t ON t.emp_no = e.emp_no AND t.to_date = %(cur)s {clause}"""
-    with session(user, "search", "employees", {"q": q, "dept_no": dept_no, "page": page}) as cur:
+    # Only allowlisted columns and validated directions enter the SQL ordering.
+    order = ", ".join(f"{column} {sort_dir.upper()} NULLS LAST" for column in SORT_COLUMNS[sort_by])
+    order += ", e.emp_no ASC"
+    with session(user, "search", "employees", {"q": q, "dept_no": dept_no, "page": page,
+                                               "sort_by": sort_by, "sort_dir": sort_dir}) as cur:
         cur.execute(f"SELECT e.emp_no, e.first_name, e.last_name, e.hire_date, d.dept_no, d.dept_name, t.title "
-                    f"{base} ORDER BY e.last_name, e.first_name, e.emp_no LIMIT %(limit)s OFFSET %(offset)s", params)
+                    f"{base} ORDER BY {order} LIMIT %(limit)s OFFSET %(offset)s", params)
         items = cur.fetchall()
         cur.execute(f"SELECT count(*) AS n {base}", params)
         total = cur.fetchone()["n"]
