@@ -41,6 +41,7 @@ psqlx < backend/tests/integration/seed.sql
 psqlx < db/post/02_post_migration.sql
 psqlx < db/post/03_audit_access.sql
 psqlx < db/post/04_hr_write_access.sql
+psqlx < db/post/05_hr_salary_adjust.sql
 
 echo ">> building test image"
 docker build -q -t "$IMG" -f backend/Dockerfile.test backend

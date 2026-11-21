@@ -23,6 +23,14 @@ export interface NewEmployee {
   dept_no: string; title: string; salary: number;
 }
 export interface CreatedEmployee extends NewEmployee { emp_no: number; dept_name: string }
+/** GET /hr/employees/{n}/salary-change: everything the salary-change form needs. */
+export interface SalaryChangeStatus {
+  can_change: boolean; reason: string | null;
+  current: Salary | null;   // the salary in effect today
+  pending: Salary | null;   // a change that starts later (at most one)
+  earliest_date: string; latest_date: string;
+}
+export interface SalaryChanged extends Salary { emp_no: number; previous: Salary }
 
 /** A failed request. `fieldErrors` maps a form field to the API's message when the API says which field was wrong. */
 export class ApiError extends Error {
@@ -34,7 +42,7 @@ export class ApiError extends Error {
 async function get<T>(path: string): Promise<T> {
   await keycloak.updateToken(30);
   const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${keycloak.token}` } });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) throw await apiError(res);
   return res.json() as Promise<T>;
 }
 
@@ -46,6 +54,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (res.ok) return res.json() as Promise<T>;
+  throw await apiError(res);
+}
+
+/** Turns a failed response into an ApiError, using the API's own message when it sent one. */
+async function apiError(res: Response): Promise<ApiError> {
   let detail: unknown;
   try { detail = (await res.json()).detail; } catch { /* the error body was not JSON */ }
   const fieldErrors: Record<string, string> = {};
@@ -60,7 +73,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
       }
     }
   }
-  throw new ApiError(res.status, message, fieldErrors);
+  return new ApiError(res.status, message, fieldErrors);
 }
 
 export const api = {
@@ -81,5 +94,8 @@ export const api = {
   departments: () => get<Department[]>("/departments"),
   hireTitles: () => get<string[]>("/hr/titles"),
   createEmployee: (employee: NewEmployee) => post<CreatedEmployee>("/hr/employees", employee),
+  salaryChangeStatus: (id: string) => get<SalaryChangeStatus>(`/hr/employees/${id}/salary-change`),
+  changeSalary: (id: string, salary: number, effective_date: string) =>
+    post<SalaryChanged>(`/hr/employees/${id}/salaries`, { salary, effective_date }),
   department: (no: string) => get<{ dept_no: string; dept_name: string; managers: { emp_no: number; first_name: string; last_name: string }[] }>(`/departments/${no}`),
 };

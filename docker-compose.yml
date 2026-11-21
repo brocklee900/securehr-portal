@@ -42,6 +42,11 @@ services:
       LDAP_ORGANISATION: SecureHR
       LDAP_DOMAIN: securehr.local
       LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      # Read-only account (cn=readonly,dc=securehr,dc=local) the backend uses to check HR-admin membership.
+      # Created only when the LDAP volumes are first initialised; see README "Salary changes" for existing setups.
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_USERNAME: readonly
+      LDAP_READONLY_USER_PASSWORD: ${LDAP_READONLY_PASSWORD}
     command: --copy-service
     volumes:
       - ./ldap/bootstrap.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/50-bootstrap.ldif:ro
@@ -86,9 +91,13 @@ services:
       OIDC_JWKS_URL: http://keycloak:8080/realms/securehr/protocol/openid-connect/certs
       OIDC_AUDIENCE: securehr-portal
       CORS_ORIGINS: '["https://portal.localhost"]'
+      LDAP_URL: ldap://ldap:389
+      LDAP_BIND_DN: cn=readonly,dc=securehr,dc=local
+      LDAP_BIND_PASSWORD: ${LDAP_READONLY_PASSWORD}
     depends_on:
       postgres: { condition: service_healthy }
       keycloak: { condition: service_started }
+      ldap: { condition: service_started }
 
   frontend:
     <<: *restart

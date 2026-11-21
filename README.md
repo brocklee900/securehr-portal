@@ -18,9 +18,14 @@ Browser ──TLS──> Nginx ─┬─ portal.localhost  → React (Vite) ─�
 |---|---|---|---|---|
 | `employee` | name, title, department | read | none (API 403, database returns 0 rows) | no |
 | `manager` | + demographics | read | own department's **current** staff only | no |
-| `hr_admin` | everything | everything | everyone | read (append-only for everyone) |
+| `hr_admin` | everything | everything | everyone, and can **change** salaries | read (append-only for everyone) |
 
-Only `hr_admin` can **create employees** (the *New employee* page in the top bar). That is the one write the portal performs on HR data, and it is insert-only: nobody, including HR admins, can update or delete employee, department, title or salary rows through the app.
+Only `hr_admin` can **create employees** (the *New employee* page in the top bar) and **change salaries** (the *Change salary* box under an employee's salary history). Those are the only writes the portal performs on HR data. Hiring is insert-only. A salary change adds the new salary and ends the current one, and that end date is the only value the app can ever update: nobody, including HR admins, can edit or delete employee, department, title or salary rows through the app.
+
+Salary change rules (each enforced by the API, and all but the LDAP one by Postgres too):
+- Never your own salary, and never another HR admin's (anyone in the LDAP `hr-admins` group, checked live; if LDAP can't be reached, changes are refused).
+- Takes effect today or later, at most a year ahead. Past salaries are never rewritten.
+- At most one pending (future-dated) change per employee; a second one is refused until it takes effect.
 
 Access is enforced three times: the UI hides what a role can't use, the API checks the role on every request, and PostgreSQL row-level security enforces salary and audit-log access even if the API had a bug. Every successful read **and every refused request** is written to `app.audit_log`.
 
@@ -51,13 +56,20 @@ Avoid `@ : / # %` in passwords (they end up in connection URLs). The last line l
 export MSYS_NO_PATHCONV=1
 bash scripts/migrate_mysql_to_pg.sh
 ```
-Clones `datacharmer/test_db`, loads it into MySQL, copies it into Postgres schema `hr` with pgloader, then adds search indexes and the row-level security and audit rules (`db/post/02_*.sql`, `03_*.sql`) and the HR-admin-only insert rules for new employees (`04_*.sql`). Takes 5 to 10 minutes. Success ends with six `OK` lines (employees 300024, salaries 2844047, ...). Afterwards `docker compose stop mysql`.
+Clones `datacharmer/test_db`, loads it into MySQL, copies it into Postgres schema `hr` with pgloader, then adds search indexes and the row-level security and audit rules (`db/post/02_*.sql`, `03_*.sql`), the HR-admin-only insert rules for new employees (`04_*.sql`) and the salary-change rules (`05_*.sql`). Takes 5 to 10 minutes. Success ends with six `OK` lines (employees 300024, salaries 2844047, ...). Afterwards `docker compose stop mysql`.
 
 **Already migrated before the *New employee* page existed?** Don't re-migrate. Apply the one new file (safe to repeat), then rebuild the backend and frontend:
 ```bash
 docker compose exec -T postgres psql -U postgres -d employees -v ON_ERROR_STOP=1 < db/post/04_hr_write_access.sql
 docker compose up -d --build backend
 ```
+
+**Already set up before salary changes existed?** Don't re-migrate. Salary changes need the database rules and a read-only LDAP account for the backend (it checks who is in `hr-admins`):
+1. Add `LDAP_READONLY_PASSWORD=...` to `.env` (see `.env.example`).
+2. Apply the rules (safe to repeat): `docker compose exec -T postgres psql -U postgres -d employees -v ON_ERROR_STOP=1 < db/post/05_hr_salary_adjust.sql`
+3. The read-only account is only created when LDAP's volumes are first initialised. LDAP holds only the demo users from `ldap/bootstrap.ldif`, so recreate it: `docker compose rm -sf ldap`, then `docker volume rm securehr_ldapdata securehr_ldapconf`, then `docker compose up -d ldap`.
+4. In Keycloak (securehr realm) → User federation → `ldap` → Action → **Remove imported users**, then **Sync all users** (the recreated entries have new IDs).
+5. `docker compose up -d --build backend frontend`
 
 ### 3. Start the stack
 ```bash
@@ -119,10 +131,12 @@ Use a private window per login. Demo password for all LDAP users: `Passw0rd!`
 
 | Sign in as | Expect |
 |---|---|
-| `alice.hr` | Full directory, salaries for everyone, **New employee** and **Audit log** links in the top bar |
+| `alice.hr` | Full directory, salaries for everyone, **New employee** and **Audit log** links in the top bar, a **Change salary** box on every employee page |
 | `bob.manager` | Salary history only for Marketing (`d001`) staff; "Salary data not available" elsewhere; no Audit log link |
 | `carol.employee` | No salary section at all |
 | `admin.local` | Fallback HR admin that works without LDAP (set its password in Keycloak first) |
+
+To see the HR-admin rule, give an HR admin an employee number in LDAP (alice has none in the demo directory): add `employeeNumber: <n>` to her entry in `ldap/bootstrap.ldif` before LDAP is first initialised. Employee `<n>`'s page then says HR admins cannot change it, and alice cannot change her own salary.
 
 Bob's LDAP `employeeNumber` is `110039`, a **current** manager of `d001`. Row-level security only recognises managers whose `dept_manager.to_date = '9999-01-01'`, so a former manager's number sees nothing. To list current managers:
 ```bash
@@ -178,12 +192,12 @@ docker compose exec -u root jenkins chmod 666 /var/run/docker.sock   # if Jenkin
 
 | Layer | Command | What it covers |
 |---|---|---|
-| Unit (63) | `cd backend && pytest -q` | Role logic, token claims, denial auditing, new-employee validation rules. No database needed; integration tests are skipped. |
-| Integration (133) | `bash scripts/run_integration_tests.sh` | Runs in Docker: a throwaway Postgres with a small fixed dataset and your real security rules, real signed tokens through the real validation code. |
+| Unit (85) | `cd backend && pytest -q` | Role logic, token claims, denial auditing, new-employee validation rules, salary-change rules and the LDAP lookup (against an in-memory directory). No database needed; integration tests are skipped. |
+| Integration (189) | `bash scripts/run_integration_tests.sh` | Runs in Docker: a throwaway Postgres with a small fixed dataset and your real security rules, real signed tokens through the real validation code. |
 
-The integration suite checks that: tokens with a wrong audience, wrong issuer, bad signature, `alg: none` or expired are rejected; every data endpoint needs a login; search, paging and department filters return exactly the expected people (including an employee who moved departments); employees never get salaries; managers see only their **current** department (former managers and missing employee numbers see nothing); the audit log is HR-only, append-only, records denied requests, and audits its own reads; and, directly in Postgres without the API, row-level security holds and the app's database user cannot update or delete HR data or bypass the rules. For creating employees it checks that all four tables are filled together or not at all, that only `hr_admin` can do it (API and database each, separately), that clients cannot choose the employee number, and that the audit entry holds no personal data.
+The integration suite checks that: tokens with a wrong audience, wrong issuer, bad signature, `alg: none` or expired are rejected; every data endpoint needs a login; search, paging and department filters return exactly the expected people (including an employee who moved departments); employees never get salaries; managers see only their **current** department (former managers and missing employee numbers see nothing); the audit log is HR-only, append-only, records denied requests, and audits its own reads; and, directly in Postgres without the API, row-level security holds and the app's database user cannot update or delete HR data or bypass the rules. For creating employees it checks that all four tables are filled together or not at all, that only `hr_admin` can do it (API and database each, separately), that clients cannot choose the employee number, and that the audit entry holds no personal data. For salary changes it checks that the old salary is closed and the new one added together, that only `hr_admin` can do it (API and database separately), that own and other HR admins' salaries are refused (and refused if LDAP is down), that past dates, a second pending change, and editing amounts or start dates are refused in the database itself, and that the audit entry holds no amounts. The integration tests replace LDAP with a fake directory (employee 10004 plays an HR admin).
 
-The same script runs as the **Integration tests** stage in Jenkins (results published as JUnit). Together: 196 tests.
+The same script runs as the **Integration tests** stage in Jenkins (results published as JUnit). Together: 274 tests.
 
 ---
 
@@ -205,6 +219,9 @@ The same script runs as the **Integration tests** stage in Jenkins (results publ
 | Build: `Invalid option type` or `expecting '}'` in the Jenkinsfile | A plugin is missing from `jenkins/Dockerfile`, or the file was damaged by pasting. Check braces: `grep -o '{' Jenkinsfile \| wc -l` equals `grep -o '}' Jenkinsfile \| wc -l`. |
 | Creating an employee fails with a server error, or the log says `employees_emp_no_seq does not exist` / `permission denied` | `db/post/04_hr_write_access.sql` has not been applied to this database (command under step 2), or the migration was re-run afterwards without it (re-migrating drops the rules). |
 | Creating an employee says "Employee number already in use" (409) | The numbering sequence is behind the data (for example after restoring a backup). Re-run `04_hr_write_access.sql`; it moves the sequence past the highest employee number. |
+| Change salary box says "Cannot check whether this employee is an HR admin" (503) | The backend cannot bind to LDAP as `cn=readonly`: `LDAP_READONLY_PASSWORD` missing from `.env`, or LDAP was initialised before the read-only account existed (see "Already set up before salary changes existed?" under step 2). `docker compose logs backend`. |
+| Changing a salary fails with `permission denied` or a server error | `db/post/05_hr_salary_adjust.sql` has not been applied (command under step 2). |
+| Applying `05_hr_salary_adjust.sql` says employees "already have more than one current salary" | The data has two open (`9999-01-01`) salaries for those people. Fix them as `postgres` (close all but the latest), then re-run. |
 | Integration script: `Postgres did not start` | Docker Desktop not running or out of resources; the script prints the container log. |
 | pgloader cannot log in to MySQL | pgloader cannot use MySQL 8's default auth; compose pins `mysql:8.0` with `mysql_native_password`. |
 | Gitea sign-in: `x509: certificate signed by unknown authority` | `gitea/rootCA.pem` was missing or stale when the image was built: `cp jenkins/rootCA.pem gitea/rootCA.pem && docker compose up -d --build gitea`. |

@@ -1,6 +1,6 @@
-"""HR-admin-only operations (currently: hiring). Every route here needs the hr_admin role. The router itself
+"""HR-admin-only operations: hiring and salary changes. Every route here needs the hr_admin role. The router itself
 carries that requirement, so a route added later is protected by default, and Postgres row-level security
-independently refuses the same writes for any other role (db/post/04_hr_write_access.sql)."""
+independently refuses the same writes for any other role (db/post/04_hr_write_access.sql, 05_hr_salary_adjust.sql)."""
 from datetime import date, timedelta
 from typing import Literal
 
@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 
 from ..auth import User, require_role
 from ..db import session, write_audit
+from ..hr_lookup import HrLookupUnavailable, is_hr_admin
 
 CURRENT = "9999-01-01"   # "still current" marker used throughout the dataset
 
@@ -19,7 +20,7 @@ HIRE_TITLES = ("Assistant Engineer", "Engineer", "Senior Engineer", "Staff", "Se
 
 # Sanity limits that catch typos (an extra zero, a wrong century). They are not HR policy.
 MIN_HIRE_AGE = 16
-MAX_DAYS_AHEAD = 366     # a hire may be entered up to a year before the start date
+MAX_DAYS_AHEAD = 366     # a hire or a salary change may be entered up to a year before it takes effect
 MAX_SALARY = 1_000_000
 EARLIEST_BIRTH = date(1900, 1, 1)
 
@@ -113,3 +114,126 @@ def create_employee(body: NewEmployee, user: User = Depends(ONLY_HR)):
         raise HTTPException(409, "Employee number already in use: the numbering sequence is behind the data. "
                                  "Re-run db/post/04_hr_write_access.sql.") from exc
     return {"emp_no": emp_no, **body.model_dump(), "dept_name": dept["dept_name"]}
+
+
+# ---------- Salary changes ----------
+# A change adds the new salary (effective date -> '9999-01-01') and closes the current one (its to_date becomes
+# the effective date), in one transaction. Rules, each also enforced in Postgres except the LDAP one:
+#   * no change to your own salary, nor to another HR admin's (LDAP hr-admins group, checked live, fails closed);
+#   * the effective date is today or later (history is never rewritten), at most a year ahead, and after the
+#     current salary started;
+#   * at most one pending change: if the current salary itself starts in the future, nothing more can be added.
+
+class SalaryChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    salary: int = Field(ge=1, le=MAX_SALARY)
+    effective_date: date
+
+    @field_validator("effective_date")
+    @classmethod
+    def _today_to_a_year_ahead(cls, value: date) -> date:
+        if value < date.today():
+            raise ValueError("cannot be in the past")
+        if value > date.today() + timedelta(days=MAX_DAYS_AHEAD):
+            raise ValueError("cannot be more than a year in the future")
+        return value
+
+
+def _who_blocks(user: User, emp_no: int) -> str | None:
+    """Why this HR admin may not change this employee's salary, or None if they may.
+    Raises HTTPException(503) when LDAP cannot be asked (the change is refused, never allowed)."""
+    if user.emp_no is not None and user.emp_no == emp_no:
+        return "own salary"
+    try:
+        if is_hr_admin(emp_no):
+            return "target is an HR admin"
+    except HrLookupUnavailable as exc:
+        raise HTTPException(503, "Cannot check whether this employee is an HR admin right now, so salary "
+                                 "changes are unavailable. Try again later.") from exc
+    return None
+
+
+BLOCK_MESSAGES = {
+    "own salary": "You cannot change your own salary.",
+    "target is an HR admin": "HR admins cannot change the salary of another HR admin.",
+}
+
+
+def _current_and_pending(cur, emp_no: int, lock: bool = False):
+    """The open ('9999-01-01') salary row, or None. With lock=True it is locked until the transaction ends, so two
+    simultaneous changes for one employee run one after the other instead of both closing the same row."""
+    cur.execute("SELECT salary, from_date, to_date FROM salaries WHERE emp_no = %s AND to_date = %s"
+                + (" FOR UPDATE" if lock else ""), (emp_no, CURRENT))
+    return cur.fetchone()
+
+
+@router.get("/employees/{emp_no}/salary-change")
+def salary_change_status(emp_no: int, user: User = Depends(ONLY_HR)):
+    """What the salary-change form needs: whether a change is allowed, the current salary and any pending change."""
+    with session(user, "read", f"hr/employees/{emp_no}/salary-change") as cur:
+        cur.execute("SELECT 1 FROM employees WHERE emp_no = %s", (emp_no,))
+        if cur.fetchone() is None:
+            raise HTTPException(404, "Employee not found")
+        open_row = _current_and_pending(cur, emp_no)
+        cur.execute("SELECT salary, from_date, to_date FROM salaries WHERE emp_no = %s AND from_date <= %s "
+                    "ORDER BY from_date DESC LIMIT 1", (emp_no, date.today()))
+        in_effect = cur.fetchone()
+    pending = open_row if open_row and open_row["from_date"] > date.today() else None
+    blocked = _who_blocks(user, emp_no)
+    reason = BLOCK_MESSAGES.get(blocked or "")
+    if reason is None and open_row is None:
+        reason = "This employee has no current salary (they may have left), so it cannot be changed."
+    elif reason is None and pending is not None:
+        reason = f"A salary change is already pending (from {pending['from_date']}). Only one can be pending."
+    earliest = max(date.today(), open_row["from_date"] + timedelta(days=1)) if open_row else date.today()
+    return {"can_change": reason is None, "reason": reason, "current": in_effect, "pending": pending,
+            "earliest_date": earliest, "latest_date": date.today() + timedelta(days=MAX_DAYS_AHEAD)}
+
+
+def _field_error(field: str, msg: str) -> HTTPException:
+    return HTTPException(422, [{"type": "value_error", "loc": ["body", field], "msg": msg}])
+
+
+@router.post("/employees/{emp_no}/salaries", status_code=201)
+def change_salary(emp_no: int, body: SalaryChange, user: User = Depends(ONLY_HR)):
+    resource = f"employees/{emp_no}/salaries"
+    blocked = _who_blocks(user, emp_no)       # asks LDAP before the transaction, so no row is locked meanwhile
+    if blocked:
+        with session(user, "denied", resource, {"method": "POST", "reason": blocked}):
+            pass
+        raise HTTPException(403, BLOCK_MESSAGES[blocked])
+    try:
+        with session(user, "update", resource, audit=False) as cur:
+            current = _current_and_pending(cur, emp_no, lock=True)
+            if current is None:
+                cur.execute("SELECT 1 FROM employees WHERE emp_no = %s", (emp_no,))
+                if cur.fetchone() is None:
+                    raise HTTPException(404, "Employee not found")
+                raise HTTPException(409, "This employee has no current salary (they may have left, or it was "
+                                         "changed a moment ago). Reload and try again.")
+            if current["from_date"] > date.today():
+                raise HTTPException(409, f"A salary change is already pending (from {current['from_date']}). "
+                                         "Only one can be pending.")
+            if body.effective_date <= current["from_date"]:
+                raise _field_error("effective_date", f"must be after {current['from_date']}, when the current "
+                                                     "salary started")
+            if body.salary == current["salary"]:
+                raise _field_error("salary", "is the same as the current salary")
+            cur.execute("INSERT INTO salaries (emp_no, salary, from_date, to_date) VALUES (%s, %s, %s, %s)",
+                        (emp_no, body.salary, body.effective_date, CURRENT))
+            cur.execute("UPDATE salaries SET to_date = %s WHERE emp_no = %s AND from_date = %s AND to_date = %s",
+                        (body.effective_date, emp_no, current["from_date"], CURRENT))
+            if cur.rowcount != 1:      # cannot happen while the row is locked; never commit a half change
+                raise HTTPException(409, "The current salary changed a moment ago. Reload and try again.")
+            # Like hiring, the log records who changed whose salary and when it takes effect, not the amounts.
+            write_audit(cur, user, "update", resource, {"effective_date": body.effective_date.isoformat()})
+    except (psycopg.errors.UniqueViolation, psycopg.errors.ExclusionViolation) as exc:
+        raise HTTPException(409, "The salary changed a moment ago. Reload and try again.") from exc
+    except psycopg.errors.InsufficientPrivilege as exc:
+        raise HTTPException(403, "The database refused this salary change.") from exc
+    except psycopg.errors.CheckViolation as exc:
+        raise HTTPException(409, exc.diag.message_primary or "The database refused this salary change.") from exc
+    return {"emp_no": emp_no, "salary": body.salary, "from_date": body.effective_date, "to_date": CURRENT,
+            "previous": {"salary": current["salary"], "from_date": current["from_date"],
+                         "to_date": body.effective_date}}

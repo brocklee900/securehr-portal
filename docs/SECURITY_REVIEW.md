@@ -1,10 +1,10 @@
 # Security review: SecureHR Portal
 
-Review date: October 30, 2026 (finding 16 added November 20, 2026). Scope: the code and configuration in this repository, as run by `docker compose` on a developer machine. Not in scope: production hosting, network design outside Docker, the sample dataset itself.
+Review date: October 30, 2026 (finding 16 added November 20, 2026, finding 17 November 21, 2026). Scope: the code and configuration in this repository, as run by `docker compose` on a developer machine. Not in scope: production hosting, network design outside Docker, the sample dataset itself.
 
 ## Method
 1. Read the authentication, authorisation, database and pipeline code and configuration.
-2. Wrote automated tests for each security claim (196 tests after the employee-creation change; see README, "Testing").
+2. Wrote automated tests for each security claim (274 tests after the salary-change feature; see README, "Testing").
 3. **Mutation-checked the tests:** deliberately broke the security rules one at a time (RLS off, `BYPASSRLS` granted to the app role, audit log readable by all, UPDATE granted on salaries, employees allowed on the salaries endpoint, audience / issuer / signature / expiry checks disabled, `/audit` opened to managers, demographics leaked to employees, former managers treated as current) and confirmed the test suite fails each time, and only on the relevant tests.
 4. Scanned dependencies and the backend image in CI (`pip-audit`, Trivy).
 
@@ -28,6 +28,7 @@ Review date: October 30, 2026 (finding 16 added November 20, 2026). Scope: the c
 | 14 | Failed logins (401) are not in the audit log | Low | **By design** |
 | 15 | No rate limiting on the API | Low | **Open** (matters more now that one endpoint writes) |
 | 16 | New write path: HR admins can create employees | Medium | **Mitigated and tested**, see below |
+| 17 | New write path: HR admins can change salaries (the first UPDATE the app can make) | Medium | **Mitigated and tested**, see below |
 
 ## Details
 
@@ -44,7 +45,7 @@ Review date: October 30, 2026 (finding 16 added November 20, 2026). Scope: the c
 ### What is in place (positives)
 - Authorisation at three layers: UI, API role checks, and Postgres row-level security.
 - Token validation checks signature (RS256 only), issuer, audience and expiry; `alg: none` and wrong-key tokens are rejected (tested).
-- The API's database user is not a superuser, does not bypass RLS and can only *insert* HR data, and only when the request carries `hr_admin` (tested). It has no UPDATE or DELETE on any HR table and cannot reset the employee-number sequence.
+- The API's database user is not a superuser, does not bypass RLS and can only *insert* HR data, and only when the request carries `hr_admin` (tested). Its only UPDATE is ending the current salary (`salaries.to_date`, finding 17). It has no DELETE on any HR table and cannot reset the employee-number sequence.
 - The backend container runs as a non-root user; all user input reaches SQL as bound parameters (an injection attempt is in the test suite); CORS is limited to the portal origin, GET and POST.
 - Nginx sets HSTS and `X-Content-Type-Options` for the portal site; HTTP redirects to HTTPS; Keycloak has brute-force protection enabled in the realm.
 - `.env`, private keys and certificates are git-ignored; CI uses `.env.example` only.
@@ -58,6 +59,14 @@ Review date: October 30, 2026 (finding 16 added November 20, 2026). Scope: the c
 - *Audit.* One `create` entry per hire with the new employee number, department and title, and deliberately no names, birth date or salary.
 - *CSRF.* Not applicable: authentication is a bearer token in a header, not a cookie.
 - *Not addressed:* rate limiting (finding 15), and no approval step or second-person review for a new hire's salary.
+
+**17. Salary changes.** Ending the current salary is an UPDATE, so this relaxes the insert-only stance of finding 16 as narrowly as possible:
+- *Rewriting history.* UPDATE is granted on `salaries.to_date` only, so amounts and start dates cannot be edited (tested). Row-level security exposes only the open row, and a trigger requires the new end date to be today or later, after the row started, and equal to the start of a replacement already inserted in the same transaction. Past salaries cannot be changed or reopened (tested). Breaking the trigger or the one-current-salary constraint makes the database tests fail (mutation-checked).
+- *Wrong role.* Same as hiring: `/hr` requires `hr_admin`, and Postgres refuses the INSERT and UPDATE for any other role (tested separately).
+- *Self-dealing.* Changing one's own salary is refused by the API and by the trigger (it compares with `app.emp_no`). Changing another HR admin's salary is refused by the API after a live LDAP lookup of the `hr-admins` group; the database cannot enforce this because it has no role data. If LDAP is unreachable or the read-only account is misconfigured, changes are refused (503), never allowed. Refusals are audited as `denied`. Limits: an HR admin with no `employeeNumber` in LDAP (like the demo `alice.hr`, or Keycloak-only accounts such as `admin.local`) is not linked to any salary row, so there is nothing to protect but also nothing tying them to a record; nested LDAP groups and roles granted directly in Keycloak are not seen by the lookup.
+- *Pending changes.* At most one future-dated change; enforced by the API and the trigger, with a row lock and a deferred exclusion constraint against two simultaneous requests.
+- *Audit.* One `update` entry per change with the employee and the effective date, no amounts.
+- *Not addressed:* no second-person approval for a change, and a pending change cannot be cancelled through the app (an administrator must do it).
 
 ### Accepted risks and limitations
 

@@ -81,3 +81,44 @@ def db_as():
             conn.rollback()
             conn.close()
     return _ctx
+
+
+# Employees the fake directory reports as HR admins. 10004 (Koblick, Finance) stands in for an HR colleague.
+HR_ADMIN_EMP_NOS = {10004}
+
+
+@pytest.fixture(autouse=True)
+def fake_ldap(monkeypatch):
+    """Stand in for the LDAP lookup (app/hr_lookup.py has its own unit tests). Tests may change `members`, or set
+    `down = True` to simulate LDAP being unreachable."""
+    from app.hr_lookup import HrLookupUnavailable
+    from app.routers import hr_admin
+
+    state = SimpleNamespace(members=set(HR_ADMIN_EMP_NOS), down=False, asked=[])
+
+    def is_hr_admin(emp_no):
+        state.asked.append(emp_no)
+        if state.down:
+            raise HrLookupUnavailable("test: LDAP down")
+        return emp_no in state.members
+
+    monkeypatch.setattr(hr_admin, "is_hr_admin", is_hr_admin)
+    return state
+
+
+@pytest.fixture
+def salary_restore():
+    """Salary changes made through the API must not outlive their test (other tests count salary rows, and the
+    API's DB user cannot delete). Saves hr.salaries for the seeded employees and puts it back exactly afterwards.
+    Yields the owner connection for checks."""
+    url = os.environ.get("ADMIN_DATABASE_URL")
+    if not url:
+        pytest.skip("needs ADMIN_DATABASE_URL (set by scripts/run_integration_tests.sh) to clean up after itself")
+    with psycopg.connect(url, autocommit=True) as conn:
+        saved = conn.execute("SELECT emp_no, salary, from_date, to_date FROM hr.salaries "
+                             "WHERE emp_no <= 110114").fetchall()
+        yield conn
+        with conn.transaction():
+            conn.execute("DELETE FROM hr.salaries WHERE emp_no <= 110114")
+            with conn.cursor() as cur:
+                cur.executemany("INSERT INTO hr.salaries VALUES (%s, %s, %s, %s)", saved)
