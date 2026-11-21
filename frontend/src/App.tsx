@@ -4,6 +4,7 @@ import Audit from "./pages/Audit";
 import Departments from "./pages/Departments";
 import EmployeeDetail from "./pages/EmployeeDetail";
 import EmployeeSearch from "./pages/EmployeeSearch";
+import NewEmployee from "./pages/NewEmployee";
 
 export default function App() {
   const role = currentRole();
@@ -13,6 +14,7 @@ export default function App() {
         <strong>SecureHR</strong>
         <Link to="/">Employees</Link>
         <Link to="/departments">Departments</Link>
+        {role === "hr_admin" && <Link to="/employees/new">New employee</Link>}
         {role === "hr_admin" && <Link to="/audit">Audit log</Link>}
         <span style={{ marginLeft: "auto" }}>
           {keycloak.tokenParsed?.preferred_username} ({role}){" "}
@@ -21,6 +23,7 @@ export default function App() {
       </header>
       <Routes>
         <Route path="/" element={<EmployeeSearch />} />
+        <Route path="/employees/new" element={role === "hr_admin" ? <NewEmployee /> : <p>Not authorized.</p>} />
         <Route path="/employees/:id" element={<EmployeeDetail role={role} />} />
         <Route path="/departments" element={<Departments />} />
         <Route path="/audit" element={role === "hr_admin" ? <Audit /> : <p>Not authorized.</p>} />

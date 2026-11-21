@@ -20,6 +20,8 @@ Browser ──TLS──> Nginx ─┬─ portal.localhost  → React (Vite) ─�
 | `manager` | + demographics | read | own department's **current** staff only | no |
 | `hr_admin` | everything | everything | everyone | read (append-only for everyone) |
 
+Only `hr_admin` can **create employees** (the *New employee* page in the top bar). That is the one write the portal performs on HR data, and it is insert-only: nobody, including HR admins, can update or delete employee, department, title or salary rows through the app.
+
 Access is enforced three times: the UI hides what a role can't use, the API checks the role on every request, and PostgreSQL row-level security enforces salary and audit-log access even if the API had a bug. Every successful read **and every refused request** is written to `app.audit_log`.
 
 ---
@@ -49,7 +51,13 @@ Avoid `@ : / # %` in passwords (they end up in connection URLs). The last line l
 export MSYS_NO_PATHCONV=1
 bash scripts/migrate_mysql_to_pg.sh
 ```
-Clones `datacharmer/test_db`, loads it into MySQL, copies it into Postgres schema `hr` with pgloader, then adds search indexes and the row-level security and audit rules (`db/post/02_*.sql`, `03_*.sql`). Takes 5 to 10 minutes. Success ends with six `OK` lines (employees 300024, salaries 2844047, ...). Afterwards `docker compose stop mysql`.
+Clones `datacharmer/test_db`, loads it into MySQL, copies it into Postgres schema `hr` with pgloader, then adds search indexes and the row-level security and audit rules (`db/post/02_*.sql`, `03_*.sql`) and the HR-admin-only insert rules for new employees (`04_*.sql`). Takes 5 to 10 minutes. Success ends with six `OK` lines (employees 300024, salaries 2844047, ...). Afterwards `docker compose stop mysql`.
+
+**Already migrated before the *New employee* page existed?** Don't re-migrate. Apply the one new file (safe to repeat), then rebuild the backend and frontend:
+```bash
+docker compose exec -T postgres psql -U postgres -d employees -v ON_ERROR_STOP=1 < db/post/04_hr_write_access.sql
+docker compose up -d --build backend
+```
 
 ### 3. Start the stack
 ```bash
@@ -111,7 +119,7 @@ Use a private window per login. Demo password for all LDAP users: `Passw0rd!`
 
 | Sign in as | Expect |
 |---|---|
-| `alice.hr` | Full directory, salaries for everyone, **Audit log** link in the top bar |
+| `alice.hr` | Full directory, salaries for everyone, **New employee** and **Audit log** links in the top bar |
 | `bob.manager` | Salary history only for Marketing (`d001`) staff; "Salary data not available" elsewhere; no Audit log link |
 | `carol.employee` | No salary section at all |
 | `admin.local` | Fallback HR admin that works without LDAP (set its password in Keycloak first) |
@@ -170,12 +178,12 @@ docker compose exec -u root jenkins chmod 666 /var/run/docker.sock   # if Jenkin
 
 | Layer | Command | What it covers |
 |---|---|---|
-| Unit (11) | `cd backend && pytest -q` | Role logic, token claims, denial auditing. No database needed; integration tests are skipped. |
-| Integration (68) | `bash scripts/run_integration_tests.sh` | Runs in Docker: a throwaway Postgres with a small fixed dataset and your real security rules, real signed tokens through the real validation code. |
+| Unit (63) | `cd backend && pytest -q` | Role logic, token claims, denial auditing, new-employee validation rules. No database needed; integration tests are skipped. |
+| Integration (133) | `bash scripts/run_integration_tests.sh` | Runs in Docker: a throwaway Postgres with a small fixed dataset and your real security rules, real signed tokens through the real validation code. |
 
-The integration suite checks that: tokens with a wrong audience, wrong issuer, bad signature, `alg: none` or expired are rejected; every data endpoint needs a login; search, paging and department filters return exactly the expected people (including an employee who moved departments); employees never get salaries; managers see only their **current** department (former managers and missing employee numbers see nothing); the audit log is HR-only, append-only, records denied requests, and audits its own reads; and, directly in Postgres without the API, row-level security holds and the app's database user cannot modify HR data or bypass the rules.
+The integration suite checks that: tokens with a wrong audience, wrong issuer, bad signature, `alg: none` or expired are rejected; every data endpoint needs a login; search, paging and department filters return exactly the expected people (including an employee who moved departments); employees never get salaries; managers see only their **current** department (former managers and missing employee numbers see nothing); the audit log is HR-only, append-only, records denied requests, and audits its own reads; and, directly in Postgres without the API, row-level security holds and the app's database user cannot update or delete HR data or bypass the rules. For creating employees it checks that all four tables are filled together or not at all, that only `hr_admin` can do it (API and database each, separately), that clients cannot choose the employee number, and that the audit entry holds no personal data.
 
-The same script runs as the **Integration tests** stage in Jenkins (results published as JUnit). Together: 79 tests.
+The same script runs as the **Integration tests** stage in Jenkins (results published as JUnit). Together: 196 tests.
 
 ---
 
@@ -195,6 +203,8 @@ The same script runs as the **Integration tests** stage in Jenkins (results publ
 | Jenkins "Oops!" page after being logged in a while | Token refresh failure caused by `rootURLFromRequest`; it must not be set in `casc.yaml` (already removed). |
 | Build: `docker: not found` or `permission denied ... docker.sock` | Rebuild Jenkins (`docker compose up -d --build jenkins`), then run the `chmod 666` command from step 5. |
 | Build: `Invalid option type` or `expecting '}'` in the Jenkinsfile | A plugin is missing from `jenkins/Dockerfile`, or the file was damaged by pasting. Check braces: `grep -o '{' Jenkinsfile \| wc -l` equals `grep -o '}' Jenkinsfile \| wc -l`. |
+| Creating an employee fails with a server error, or the log says `employees_emp_no_seq does not exist` / `permission denied` | `db/post/04_hr_write_access.sql` has not been applied to this database (command under step 2), or the migration was re-run afterwards without it (re-migrating drops the rules). |
+| Creating an employee says "Employee number already in use" (409) | The numbering sequence is behind the data (for example after restoring a backup). Re-run `04_hr_write_access.sql`; it moves the sequence past the highest employee number. |
 | Integration script: `Postgres did not start` | Docker Desktop not running or out of resources; the script prints the container log. |
 | pgloader cannot log in to MySQL | pgloader cannot use MySQL 8's default auth; compose pins `mysql:8.0` with `mysql_native_password`. |
 | Gitea sign-in: `x509: certificate signed by unknown authority` | `gitea/rootCA.pem` was missing or stale when the image was built: `cp jenkins/rootCA.pem gitea/rootCA.pem && docker compose up -d --build gitea`. |
@@ -211,12 +221,12 @@ The same script runs as the **Integration tests** stage in Jenkins (results publ
 |---|---|
 | `docker-compose.yml`, `.env.example` | Full stack |
 | `db/init/` | First-start Postgres setup: app role, `app.audit_log` |
-| `db/post/` | After migration: indexes and RLS (`02_`), audit-log access rules (`03_`), pgloader config |
+| `db/post/` | After migration: indexes and RLS (`02_`), audit-log access rules (`03_`), HR-admin inserts and the employee-number sequence (`04_`), pgloader config |
 | `scripts/` | Certificates, migration, validation, integration tests, Gitea/Keycloak setup (`setup-gitea.sh`) |
 | `ldap/bootstrap.ldif`, `keycloak/` | Demo directory, realm import file, federation guide |
 | `nginx/` | TLS reverse proxy |
 | `backend/` | FastAPI app (`app/`), unit tests, integration tests (`tests/integration/`), `Dockerfile`, `Dockerfile.test` |
-| `frontend/` | React/TS: login, search, detail, departments, audit log |
+| `frontend/` | React/TS: login, search, detail, departments, audit log, new employee (HR admins) |
 | `gitea/` | Gitea image (official image plus the local CA); configured by environment variables in `docker-compose.yml` |
 | `jenkins/`, `Jenkinsfile` | Jenkins image and config-as-code (OIDC login, roles); pipeline definition |
 | `docs/` | Architecture notes, milestone status, security review |
@@ -230,7 +240,8 @@ See `docs/SECURITY_REVIEW.md` for findings, fixes and accepted risks.
 - [x] API with token validation and role checks; React UI with role-based views
 - [x] Row-level security, audit logging (including denied requests), audit viewer
 - [x] Jenkins signs in through Keycloak; CI pipeline with lint, unit and integration tests, dependency and container scans
-- [x] 79 automated tests
+- [x] HR admins can create employees (form, API, insert-only database rules, audit entry)
+- [x] 196 automated tests
 - [ ] Git server sign-in through the same SSO: Gitea added and scripted (step 7); tick once verified end to end
 - [ ] Webhook-triggered builds: Gitea to Jenkins over the Docker network (step 7); tick once a push starts a build
 - [ ] Multi-factor authentication (not implemented; see security review)

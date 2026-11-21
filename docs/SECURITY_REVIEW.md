@@ -1,10 +1,10 @@
 # Security review: SecureHR Portal
 
-Review date: October 30, 2026. Scope: the code and configuration in this repository, as run by `docker compose` on a developer machine. Not in scope: production hosting, network design outside Docker, the sample dataset itself.
+Review date: October 30, 2026 (finding 16 added November 20, 2026). Scope: the code and configuration in this repository, as run by `docker compose` on a developer machine. Not in scope: production hosting, network design outside Docker, the sample dataset itself.
 
 ## Method
 1. Read the authentication, authorisation, database and pipeline code and configuration.
-2. Wrote automated tests for each security claim (79 tests; see README, "Testing").
+2. Wrote automated tests for each security claim (196 tests after the employee-creation change; see README, "Testing").
 3. **Mutation-checked the tests:** deliberately broke the security rules one at a time (RLS off, `BYPASSRLS` granted to the app role, audit log readable by all, UPDATE granted on salaries, employees allowed on the salaries endpoint, audience / issuer / signature / expiry checks disabled, `/audit` opened to managers, demographics leaked to employees, former managers treated as current) and confirmed the test suite fails each time, and only on the relevant tests.
 4. Scanned dependencies and the backend image in CI (`pip-audit`, Trivy).
 
@@ -26,7 +26,8 @@ Review date: October 30, 2026. Scope: the code and configuration in this reposit
 | 12 | Frontend dependencies: 4 npm advisories (3 moderate, 1 high), not triaged; Trivy scans only the backend image | Medium | **Open** |
 | 13 | 44 HIGH vulnerabilities in the Debian base image have no fix available and are ignored by the scan gate | Low to Medium | **Accepted**, re-scan periodically |
 | 14 | Failed logins (401) are not in the audit log | Low | **By design** |
-| 15 | No rate limiting on the API | Low | **Open** |
+| 15 | No rate limiting on the API | Low | **Open** (matters more now that one endpoint writes) |
+| 16 | New write path: HR admins can create employees | Medium | **Mitigated and tested**, see below |
 
 ## Details
 
@@ -43,10 +44,20 @@ Review date: October 30, 2026. Scope: the code and configuration in this reposit
 ### What is in place (positives)
 - Authorisation at three layers: UI, API role checks, and Postgres row-level security.
 - Token validation checks signature (RS256 only), issuer, audience and expiry; `alg: none` and wrong-key tokens are rejected (tested).
-- The API's database user is not a superuser, does not bypass RLS and has read-only access to HR data (tested).
-- The backend container runs as a non-root user; all user input reaches SQL as bound parameters (an injection attempt is in the test suite); CORS is limited to the portal origin and GET.
+- The API's database user is not a superuser, does not bypass RLS and can only *insert* HR data, and only when the request carries `hr_admin` (tested). It has no UPDATE or DELETE on any HR table and cannot reset the employee-number sequence.
+- The backend container runs as a non-root user; all user input reaches SQL as bound parameters (an injection attempt is in the test suite); CORS is limited to the portal origin, GET and POST.
 - Nginx sets HSTS and `X-Content-Type-Options` for the portal site; HTTP redirects to HTTPS; Keycloak has brute-force protection enabled in the realm.
 - `.env`, private keys and certificates are git-ignored; CI uses `.env.example` only.
+
+**16. New write path (HR admins create employees).** This is the first change to the earlier "read-only" stance, so each way it could go wrong was closed separately and tested:
+- *Wrong role.* The `/hr` router requires `hr_admin` for every route, and Postgres independently refuses the INSERTs for any other role (RLS `WITH CHECK` on all four tables). Removing the API check still left the database refusing (mutation-checked); refused attempts are audited as `denied`.
+- *Reads must not change.* Row-level security was switched on for `employees`, `dept_emp` and `titles` (it was only on `salaries` before). Each got an explicit read-for-everyone policy; a test confirms every role still reads the same rows, and the manager-scoped salary rules still pass.
+- *Rewriting history.* No UPDATE or DELETE was granted anywhere, so a bug or stolen token can add a wrong employee but cannot alter or erase existing records (tested for all four tables). The flip side: a data-entry mistake in a new hire can only be corrected by a database administrator for now.
+- *Client-chosen identity.* The employee number comes from a database sequence. The request schema rejects unknown fields, so a client cannot send `emp_no` (tested).
+- *Partial records.* All four tables are written in one transaction; a forced failure on the last insert leaves nothing behind (tested).
+- *Audit.* One `create` entry per hire with the new employee number, department and title, and deliberately no names, birth date or salary.
+- *CSRF.* Not applicable: authentication is a bearer token in a header, not a cookie.
+- *Not addressed:* rate limiting (finding 15), and no approval step or second-person review for a new hire's salary.
 
 ### Accepted risks and limitations
 

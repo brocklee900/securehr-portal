@@ -8,6 +8,8 @@
 2. FastAPI `require_role` / per-field filtering.
 3. Postgres RLS on `hr.salaries`; the API runs as non-owner `portal_app` and sets `app.role` / `app.emp_no` with `set_config(..., true)` inside each transaction.
 
+**Creating employees (the only write):** `POST /hr/employees`, `hr_admin` only. The router carries the role requirement (new routes under `/hr` are protected by default) and Postgres independently refuses the INSERTs for any other role (`db/post/04_hr_write_access.sql`: INSERT policies on `employees`, `dept_emp`, `titles`, `salaries`; no UPDATE/DELETE grant anywhere). One request writes all four tables in one transaction. The employee number comes from a database sequence, never from the client. Start dates equal the hire date and end dates use the dataset's `9999-01-01` "current" marker, so the new person immediately appears in search, department lists and (for the department's current manager) salary views.
+
 **Audit:** every request inserts into `app.audit_log` in the same transaction as the read.
 
 **Manager scoping** depends on the `emp_no` token claim (LDAP `employeeNumber` → Keycloak attribute → token). If it's missing, managers see no salaries (fails closed).

@@ -20,4 +20,5 @@ docker run --rm --network securehr_default -v "$PWD/db/post:/post:ro" \
 
 docker compose exec -T postgres psql -U postgres -d employees -v ON_ERROR_STOP=1 < db/post/02_post_migration.sql
 docker compose exec -T postgres psql -U postgres -d employees -v ON_ERROR_STOP=1 < db/post/03_audit_access.sql
+docker compose exec -T postgres psql -U postgres -d employees -v ON_ERROR_STOP=1 < db/post/04_hr_write_access.sql
 bash scripts/validate_migration.sh

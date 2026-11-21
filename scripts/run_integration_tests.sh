@@ -40,6 +40,7 @@ psqlx < db/init/01_roles_audit.sql
 psqlx < backend/tests/integration/seed.sql
 psqlx < db/post/02_post_migration.sql
 psqlx < db/post/03_audit_access.sql
+psqlx < db/post/04_hr_write_access.sql
 
 echo ">> building test image"
 docker build -q -t "$IMG" -f backend/Dockerfile.test backend
@@ -47,7 +48,8 @@ docker build -q -t "$IMG" -f backend/Dockerfile.test backend
 echo ">> running pytest"
 set +e
 docker run --name "$TC" --network "$NET" \
-  -e DATABASE_URL="postgresql://portal_app:${PW}@${DB}:5432/employees" "$IMG"
+  -e DATABASE_URL="postgresql://portal_app:${PW}@${DB}:5432/employees" \
+  -e ADMIN_DATABASE_URL="postgresql://postgres:postgres@${DB}:5432/employees" "$IMG"
 rc=$?
 set -e
 docker cp "$TC:/tmp/integration.xml" backend/integration-report.xml >/dev/null 2>&1 || true

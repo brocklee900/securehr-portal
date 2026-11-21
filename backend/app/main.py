@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .auth import User, current_user
 from .config import settings
 from .db import pool
-from .routers import audit, departments, employees
+from .routers import audit, departments, employees, hr_admin
 
 
 @asynccontextmanager
@@ -18,11 +18,12 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="SecureHR Portal API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
-                   allow_methods=["GET"], allow_headers=["Authorization"])
+                   allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
 
 app.include_router(employees.router)
 app.include_router(departments.router)
 app.include_router(audit.router)
+app.include_router(hr_admin.router)
 
 
 @app.get("/health", tags=["meta"])

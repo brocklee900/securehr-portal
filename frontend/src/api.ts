@@ -18,12 +18,49 @@ export interface AuditRow {
   action: string; resource: string; detail: Record<string, unknown>;
 }
 export interface Title { title: string; from_date: string; to_date: string }
+export interface NewEmployee {
+  first_name: string; last_name: string; gender: "M" | "F"; birth_date: string; hire_date: string;
+  dept_no: string; title: string; salary: number;
+}
+export interface CreatedEmployee extends NewEmployee { emp_no: number; dept_name: string }
+
+/** A failed request. `fieldErrors` maps a form field to the API's message when the API says which field was wrong. */
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public fieldErrors: Record<string, string> = {}) {
+    super(message);
+  }
+}
 
 async function get<T>(path: string): Promise<T> {
   await keycloak.updateToken(30);
   const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${keycloak.token}` } });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json() as Promise<T>;
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  await keycloak.updateToken(30);
+  const res = await fetch(`/api${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${keycloak.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) return res.json() as Promise<T>;
+  let detail: unknown;
+  try { detail = (await res.json()).detail; } catch { /* the error body was not JSON */ }
+  const fieldErrors: Record<string, string> = {};
+  let message = `${res.status} ${res.statusText}`;
+  if (typeof detail === "string") {
+    message = detail;
+  } else if (Array.isArray(detail)) {   // FastAPI validation errors: [{ loc: ["body", "salary"], msg: "..." }]
+    for (const item of detail as { loc?: unknown[]; msg?: unknown }[]) {
+      const field = item.loc?.[item.loc.length - 1];
+      if (typeof field === "string" && typeof item.msg === "string" && !(field in fieldErrors)) {
+        fieldErrors[field] = item.msg.replace(/^Value error, /, "");
+      }
+    }
+  }
+  throw new ApiError(res.status, message, fieldErrors);
 }
 
 export const api = {
@@ -42,5 +79,7 @@ export const api = {
   audit: (username: string, action: string, page: number) =>
     get<Page<AuditRow>>(`/audit?page=${page}&page_size=50${username ? `&username=${encodeURIComponent(username)}` : ""}${action ? `&action=${encodeURIComponent(action)}` : ""}`),
   departments: () => get<Department[]>("/departments"),
+  hireTitles: () => get<string[]>("/hr/titles"),
+  createEmployee: (employee: NewEmployee) => post<CreatedEmployee>("/hr/employees", employee),
   department: (no: string) => get<{ dept_no: string; dept_name: string; managers: { emp_no: number; first_name: string; last_name: string }[] }>(`/departments/${no}`),
 };

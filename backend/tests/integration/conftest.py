@@ -52,6 +52,21 @@ def emp():
 
 
 @pytest.fixture
+def hire_cleanup():
+    """Employees created through the API must not outlive their test: other tests count every employee, and the
+    API's DB user (correctly) cannot delete. Connects as the database owner; yields that connection for checks.
+    Removes everything numbered above the highest employee that existed at the start, even if the test failed."""
+    url = os.environ.get("ADMIN_DATABASE_URL")
+    if not url:
+        pytest.skip("needs ADMIN_DATABASE_URL (set by scripts/run_integration_tests.sh) to clean up after itself")
+    with psycopg.connect(url, autocommit=True) as conn:
+        top = conn.execute("SELECT max(emp_no) FROM hr.employees").fetchone()[0]
+        yield conn
+        for table in ("salaries", "titles", "dept_emp", "employees"):   # children first (foreign keys)
+            conn.execute(f"DELETE FROM hr.{table} WHERE emp_no > %s", (top,))
+
+
+@pytest.fixture
 def db_as():
     """Direct connection as the API's own DB user (portal_app), bypassing the API, with the caller's identity set."""
     @contextmanager
