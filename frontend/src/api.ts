@@ -6,6 +6,10 @@ export interface EmployeeRow {
 }
 export type EmployeeSortColumn = "name" | "title" | "department" | "hire_date";
 export type SortDirection = "asc" | "desc";
+export interface EmployeeSearchParams {
+  q: string; dept: string; title: string; hiredFrom: string; hiredTo: string;
+  page: number; sortBy: EmployeeSortColumn; sortDir: SortDirection;
+}
 export interface Page<T> { items: T[]; total: number; page: number; page_size: number }
 export interface Department { dept_no: string; dept_name: string; headcount: number }
 export interface Salary { salary: number; from_date: string; to_date: string }
@@ -23,8 +27,15 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export const api = {
-  searchEmployees: (q: string, dept: string, page: number, sortBy: EmployeeSortColumn = "name", sortDir: SortDirection = "asc") =>
-    get<Page<EmployeeRow>>(`/employees?page=${page}&page_size=25&sort_by=${sortBy}&sort_dir=${sortDir}${q ? `&q=${encodeURIComponent(q)}` : ""}${dept ? `&dept_no=${dept}` : ""}`),
+  searchEmployees: ({ q, dept, title, hiredFrom, hiredTo, page, sortBy, sortDir }: EmployeeSearchParams) => {
+    const params = new URLSearchParams({ page: String(page), page_size: "25", sort_by: sortBy, sort_dir: sortDir });
+    if (q) params.set("q", q);
+    if (dept) params.set("dept_no", dept);
+    if (title) params.set("title", title);
+    if (hiredFrom) params.set("hired_from", hiredFrom);
+    if (hiredTo) params.set("hired_to", hiredTo);
+    return get<Page<EmployeeRow>>(`/employees?${params}`);
+  },
   employee: (id: string) => get<EmployeeRow & { gender?: string; birth_date?: string }>(`/employees/${id}`),
   titles: (id: string) => get<Title[]>(`/employees/${id}/titles`),
   salaries: (id: string) => get<Salary[]>(`/employees/${id}/salaries`),

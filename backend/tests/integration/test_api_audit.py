@@ -21,7 +21,8 @@ def test_only_hr_admin_can_read_the_log(client, hr, mgr, emp):
 def test_actions_are_recorded_with_who_what_and_detail(client, hr):
     name = unique("it.audit.user1")
     user = bearer(make_token(name, ["employee"]))
-    client.get("/employees", params={"q": "koblick"}, headers=user)
+    filters = {"q": "koblick", "title": "Engineer", "hired_from": "1986-01-01", "hired_to": "1986-12-31"}
+    assert client.get("/employees", params=filters, headers=user).status_code == 200
     client.get("/employees/10001", headers=user)
     body = audit(client, hr, username=name).json()
     assert body["total"] >= 2
@@ -29,6 +30,7 @@ def test_actions_are_recorded_with_who_what_and_detail(client, hr):
     assert ("search", "employees") in seen and ("read", "employees/10001") in seen
     search_row = next(r for r in body["items"] if r["action"] == "search")
     assert search_row["role"] == "employee" and search_row["detail"]["q"] == "koblick"
+    assert {key: search_row["detail"][key] for key in filters} == filters
 
 
 def test_reading_the_audit_log_is_itself_audited(client):

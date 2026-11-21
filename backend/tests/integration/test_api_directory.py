@@ -47,6 +47,59 @@ def test_department_filter_uses_current_department_only(client, emp):
     assert set(last_names(d2["items"])) == {"Bamford", "Koblick", "Maliniak", "Legleitner"}   # Maliniak moved d001 -> d002
 
 
+@pytest.mark.parametrize("title,expected", [
+    ("eNgIn", ["Bamford", "Koblick", "Maliniak"]),
+    ("Senior Engineer", ["Bamford", "Maliniak"]),
+    ("zzzz", []),
+])
+def test_title_filter_matches_current_title_substrings(client, emp, title, expected):
+    response = client.get("/employees", params={"title": title}, headers=emp)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == len(expected)
+    assert last_names(body["items"]) == expected  # Facello's former Engineer title must not match.
+
+
+@pytest.mark.parametrize("dates,expected", [
+    ({"hired_from": "1986-06-26", "hired_to": "1986-12-01"}, ["Bamford", "Facello", "Koblick"]),
+    ({"hired_from": "1986-12-01"}, ["Koblick", "Maliniak"]),
+    ({"hired_to": "1985-01-14"}, ["Legleitner", "Markovitch"]),
+    ({"hired_from": "1986-06-26", "hired_to": "1986-06-26"}, ["Facello"]),
+    ({"hired_from": "2000-01-01", "hired_to": "2001-01-01"}, []),
+])
+def test_hire_date_filter_is_inclusive_and_allows_open_ends(client, emp, dates, expected):
+    response = client.get("/employees", params=dates, headers=emp)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == len(expected)
+    assert last_names(body["items"]) == expected
+
+
+@pytest.mark.parametrize("dates", [
+    {"hired_from": "not-a-date"},
+    {"hired_to": "1986-02-30"},
+    {"hired_from": "1987-01-01", "hired_to": "1986-01-01"},
+])
+def test_invalid_hire_date_ranges_are_rejected(client, emp, dates):
+    assert client.get("/employees", params=dates, headers=emp).status_code == 422
+
+
+def test_all_filters_combine_with_sorting_and_pagination(client, emp):
+    employees = []
+    for page in (1, 2, 3):
+        response = client.get("/employees", headers=emp, params={
+            "q": "li", "dept_no": "d002", "title": "engineer",
+            "hired_from": "1986-12-01", "hired_to": "1989-09-12",
+            "sort_by": "hire_date", "sort_dir": "desc", "page_size": 1, "page": page,
+        })
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 2
+        assert len(body["items"]) == (1 if page <= 2 else 0)
+        employees.extend(row["emp_no"] for row in body["items"])
+    assert employees == [10005, 10004]
+
+
 @pytest.mark.parametrize("sort_by,ascending", [
     ("name", [10003, 10001, 10004, 110114, 10005, 110022, 110039, 10002]),
     ("title", [10004, 110114, 110022, 110039, 10003, 10005, 10001, 10002]),
@@ -91,8 +144,9 @@ def test_sorting_rejects_unsupported_values(client, emp, params):
     assert client.get("/employees", headers=emp, params=params).status_code == 422
 
 
-def test_search_input_is_not_injectable(client, emp):
-    r = client.get("/employees", params={"q": "x'); DROP TABLE hr.employees; --"}, headers=emp)
+@pytest.mark.parametrize("field", ["q", "title"])
+def test_search_input_is_not_injectable(client, emp, field):
+    r = client.get("/employees", params={field: "x'); DROP TABLE hr.employees; --"}, headers=emp)
     assert r.status_code == 200 and r.json()["total"] == 0
     assert client.get("/employees", params={"q": "koblick"}, headers=emp).json()["total"] == 1
 

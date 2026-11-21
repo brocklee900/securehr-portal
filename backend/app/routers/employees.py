@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,12 +21,17 @@ SORT_COLUMNS = {
 def search_employees(
     q: str | None = Query(None, min_length=2, description="Name substring"),
     dept_no: str | None = None,
+    title: str | None = Query(None, description="Current title substring"),
+    hired_from: date | None = Query(None, description="Hired on or after this date (inclusive)"),
+    hired_to: date | None = Query(None, description="Hired on or before this date (inclusive)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
     sort_by: Literal["name", "title", "department", "hire_date"] = "name",
     sort_dir: Literal["asc", "desc"] = "asc",
     user: User = Depends(current_user),
 ):
+    if hired_from and hired_to and hired_from > hired_to:
+        raise HTTPException(422, "Hire date start must be on or before hire date end")
     where, params = [], {"cur": CURRENT, "limit": page_size, "offset": (page - 1) * page_size}
     if q:
         where.append("lower(e.first_name || ' ' || e.last_name) LIKE %(pat)s")
@@ -33,6 +39,15 @@ def search_employees(
     if dept_no:
         where.append("de.dept_no = %(dept)s")
         params["dept"] = dept_no
+    if title:
+        where.append("lower(t.title) LIKE %(title)s")
+        params["title"] = f"%{title.lower()}%"
+    if hired_from:
+        where.append("e.hire_date >= %(hired_from)s")
+        params["hired_from"] = hired_from
+    if hired_to:
+        where.append("e.hire_date <= %(hired_to)s")
+        params["hired_to"] = hired_to
     clause = ("WHERE " + " AND ".join(where)) if where else ""
     base = f"""FROM employees e
       LEFT JOIN dept_emp de ON de.emp_no = e.emp_no AND de.to_date = %(cur)s
@@ -42,6 +57,9 @@ def search_employees(
     order = ", ".join(f"{column} {sort_dir.upper()} NULLS LAST" for column in SORT_COLUMNS[sort_by])
     order += ", e.emp_no ASC"
     with session(user, "search", "employees", {"q": q, "dept_no": dept_no, "page": page,
+                                               "title": title,
+                                               "hired_from": hired_from.isoformat() if hired_from else None,
+                                               "hired_to": hired_to.isoformat() if hired_to else None,
                                                "sort_by": sort_by, "sort_dir": sort_dir}) as cur:
         cur.execute(f"SELECT e.emp_no, e.first_name, e.last_name, e.hire_date, d.dept_no, d.dept_name, t.title "
                     f"{base} ORDER BY {order} LIMIT %(limit)s OFFSET %(offset)s", params)
