@@ -6,10 +6,10 @@ import SalaryChange from "./SalaryChange";
 
 const CURRENT = "9999-01-01";
 
-/** Marks the salary in effect today and a change that has not started yet (dates are YYYY-MM-DD strings). */
-function salaryLabel(s: Salary, today: string): string {
-  if (s.from_date > today) return " (pending)";
-  if (s.to_date === CURRENT || s.to_date > today) return " (current)";
+/** Marks title and salary entries in effect today or starting later (dates are YYYY-MM-DD strings). */
+function historyLabel(entry: Title | Salary, today: string): string {
+  if (entry.from_date > today) return " (pending)";
+  if (entry.to_date === CURRENT || entry.to_date > today) return " (current)";
   return "";
 }
 
@@ -41,13 +41,15 @@ export default function EmployeeDetail({ role }: { role: Role }) {
       <h2>{emp.first_name} {emp.last_name} <small>#{emp.emp_no}</small></h2>
       <p>{emp.title} — {emp.dept_name} · hired {emp.hire_date}</p>
       <h3>Title history</h3>
-      <ul>{titles.map((t, i) => <li key={i}>{t.title}: {t.from_date} → {t.to_date}</li>)}</ul>
+      <ul>{titles.map((t, i) => (
+        <li key={i}>{t.title}: {t.from_date} → {t.to_date === CURRENT ? "present" : t.to_date}{historyLabel(t, todayIso)}</li>
+      ))}</ul>
       {canSeeSalary(role) && (
         <>
           <h3>Salary history</h3>
           {salaryMsg && <p>{salaryMsg}</p>}
           <ul>{salaries?.map((s, i) => (
-            <li key={i}>${s.salary.toLocaleString()}: {s.from_date} → {s.to_date === CURRENT ? "present" : s.to_date}{salaryLabel(s, todayIso)}</li>
+            <li key={i}>${s.salary.toLocaleString()}: {s.from_date} → {s.to_date === CURRENT ? "present" : s.to_date}{historyLabel(s, todayIso)}</li>
           ))}</ul>
           {role === "hr_admin" && <SalaryChange key={id} empNo={id} onChanged={loadSalaries} />}
         </>
