@@ -13,6 +13,7 @@ export default function EmployeeSearch() {
   const [q, setQ] = useState("");
   const [dept, setDept] = useState("");
   const [title, setTitle] = useState("");
+  const [searchText, setSearchText] = useState({ q: "", title: "" });
   const [hiredFrom, setHiredFrom] = useState("");
   const [hiredTo, setHiredTo] = useState("");
   const [page, setPage] = useState(1);
@@ -23,8 +24,20 @@ export default function EmployeeSearch() {
   const [sort, setSort] = useState<{ column: EmployeeSortColumn; direction: SortDirection }>({ column: "name", direction: "asc" });
   const [loading, setLoading] = useState(true);
   const invalidDateRange = Boolean(hiredFrom && hiredTo && hiredFrom > hiredTo);
+  const debouncing = q !== searchText.q || title !== searchText.title;
+  const busy = loading || debouncing;
 
   useEffect(() => { api.departments().then(setDepts).catch((e) => setError(String(e))); }, []);
+  useEffect(() => {
+    if (!debouncing) return;
+    const t = setTimeout(() => {
+      setSearchText({ q, title });
+      // Reset together with the new text so we don't fetch page 1 with the old search.
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, title, debouncing]);
+
   useEffect(() => {
     if (invalidDateRange) {
       setRows([]);
@@ -35,15 +48,13 @@ export default function EmployeeSearch() {
     }
     let active = true;
     setLoading(true);
-    const t = setTimeout(() => {
-      api.searchEmployees({ q: q.length >= 2 ? q : "", dept, title, hiredFrom, hiredTo,
-        page, sortBy: sort.column, sortDir: sort.direction })
-        .then((r) => { if (active) { setRows(r.items); setTotal(r.total); setError(""); } })
-        .catch((e) => { if (active) setError(String(e)); })
-        .finally(() => { if (active) setLoading(false); });
-    }, 250);
-    return () => { active = false; clearTimeout(t); };
-  }, [q, dept, title, hiredFrom, hiredTo, page, sort, invalidDateRange]);
+    api.searchEmployees({ q: searchText.q.length >= 2 ? searchText.q : "", dept, title: searchText.title,
+      hiredFrom, hiredTo, page, sortBy: sort.column, sortDir: sort.direction })
+      .then((r) => { if (active) { setRows(r.items); setTotal(r.total); setError(""); } })
+      .catch((e) => { if (active) setError(String(e)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [searchText, dept, hiredFrom, hiredTo, page, sort, invalidDateRange]);
 
   function sortBy(column: EmployeeSortColumn) {
     setSort((previous) => ({
@@ -59,7 +70,7 @@ export default function EmployeeSearch() {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end" }}>
         <label style={{ display: "grid", gap: 4 }}>
           Name
-          <input placeholder="Search by name…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+          <input placeholder="Search by name…" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
         <label style={{ display: "grid", gap: 4 }}>
           Department
@@ -70,7 +81,7 @@ export default function EmployeeSearch() {
         </label>
         <label style={{ display: "grid", gap: 4 }}>
           Title
-          <input placeholder="Search by title…" value={title} onChange={(e) => { setTitle(e.target.value); setPage(1); }} />
+          <input placeholder="Search by title…" value={title} onChange={(e) => setTitle(e.target.value)} />
         </label>
         <label style={{ display: "grid", gap: 4 }}>
           Hired from
@@ -90,7 +101,7 @@ export default function EmployeeSearch() {
         {invalidDateRange ? "Hired from must be on or before Hired to." : "Hire dates include both endpoints. Leave either date blank for no limit."}
       </p>
       {error && <p role="alert" style={{ color: "crimson" }}>{error}</p>}
-      <table width="100%" aria-busy={loading} style={{ marginTop: 12, borderCollapse: "collapse" }}>
+      <table width="100%" aria-busy={busy} style={{ marginTop: 12, borderCollapse: "collapse" }}>
         <thead><tr>{columns.map(({ key, label }) => (
           <th key={key} scope="col" align="left" aria-sort={sort.column === key ? (sort.direction === "asc" ? "ascending" : "descending") : undefined}>
             <button
@@ -110,15 +121,15 @@ export default function EmployeeSearch() {
               <td>{r.title}</td><td>{r.dept_name}</td><td>{r.hire_date}</td>
             </tr>
           ))}
-          {!loading && !error && !invalidDateRange && rows.length === 0 && (
+          {!busy && !error && !invalidDateRange && rows.length === 0 && (
             <tr><td colSpan={columns.length}>No employees match these filters.</td></tr>
           )}
         </tbody>
       </table>
       <p>
-        <button disabled={loading || invalidDateRange || page === 1} onClick={() => setPage(page - 1)}>Prev</button>{" "}
+        <button disabled={busy || invalidDateRange || page === 1} onClick={() => setPage(page - 1)}>Prev</button>{" "}
         Page {page} of {Math.max(1, Math.ceil(total / 25))} ({total.toLocaleString()} results){" "}
-        <button disabled={loading || invalidDateRange || page * 25 >= total} onClick={() => setPage(page + 1)}>Next</button>
+        <button disabled={busy || invalidDateRange || page * 25 >= total} onClick={() => setPage(page + 1)}>Next</button>
       </p>
     </section>
   );

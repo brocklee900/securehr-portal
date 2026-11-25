@@ -74,6 +74,24 @@ def test_employee_numbers_are_unique_and_increasing(client, hr):
     assert second > first
 
 
+def test_hiring_invalidates_cached_directory_counts_for_all_users(client, hr, emp):
+    searches = [
+        (emp, {}),
+        (hr, {}),
+        (emp, {"dept_no": "d001"}),
+        (emp, {"q": "lovelace", "title": "engineer", "hired_from": TODAY.isoformat(),
+               "hired_to": TODAY.isoformat()}),
+    ]
+    before = [client.get("/employees", headers=user, params=params).json()["total"]
+              for user, params in searches]
+    assert before == [8, 8, 4, 0]
+    assert create(client, hr).status_code == 201
+    for (user, params), total in zip(searches, before):
+        response = client.get("/employees", headers=user, params={**params, "sort_by": "hire_date"})
+        assert response.status_code == 200
+        assert response.json()["total"] == total + 1
+
+
 def test_a_manager_sees_a_new_hires_salary_only_in_their_own_department(client, hr, mgr):
     marketing = create(client, hr, dept_no="d001").json()["emp_no"]
     finance = create(client, hr, dept_no="d002", first_name="Grace").json()["emp_no"]

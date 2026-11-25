@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 
 from ..auth import User, require_role
 from ..db import session, write_audit
+from ..employee_counts import employee_count_cache
 from ..hr_lookup import HrLookupUnavailable, is_hr_admin
 
 CURRENT = "9999-01-01"   # "still current" marker used throughout the dataset
@@ -113,6 +114,7 @@ def create_employee(body: NewEmployee, user: User = Depends(ONLY_HR)):
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(409, "Employee number already in use: the numbering sequence is behind the data. "
                                  "Re-run db/post/04_hr_write_access.sql.") from exc
+    employee_count_cache.invalidate()
     return {"emp_no": emp_no, **body.model_dump(), "dept_name": dept["dept_name"]}
 
 

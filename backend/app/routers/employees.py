@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..auth import User, current_user, require_role
 from ..db import session
+from ..employee_counts import employee_count_cache
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -56,6 +57,11 @@ def search_employees(
     # Only allowlisted columns and validated directions enter the SQL ordering.
     order = ", ".join(f"{column} {sort_dir.upper()} NULLS LAST" for column in SORT_COLUMNS[sort_by])
     order += ", e.emp_no ASC"
+    # Count only depends on filters and visibility, never the page size or sort order.
+    count_key = (user, q.lower() if q else None, dept_no or None, title.lower() if title else None,
+                 hired_from, hired_to)
+    cached_total, generation = employee_count_cache.get(count_key)
+    total = cached_total
     with session(user, "search", "employees", {"q": q, "dept_no": dept_no, "page": page,
                                                "title": title,
                                                "hired_from": hired_from.isoformat() if hired_from else None,
@@ -64,8 +70,12 @@ def search_employees(
         cur.execute(f"SELECT e.emp_no, e.first_name, e.last_name, e.hire_date, d.dept_no, d.dept_name, t.title "
                     f"{base} ORDER BY {order} LIMIT %(limit)s OFFSET %(offset)s", params)
         items = cur.fetchall()
-        cur.execute(f"SELECT count(*) AS n {base}", params)
-        total = cur.fetchone()["n"]
+        if total is None:
+            cur.execute(f"SELECT count(*) AS n {base}", params)
+            total = cur.fetchone()["n"]
+    # Publish only after the read and its audit record commit successfully.
+    if cached_total is None:
+        employee_count_cache.put(count_key, total, generation)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 

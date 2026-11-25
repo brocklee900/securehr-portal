@@ -20,6 +20,16 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
+def _reset_employee_counts():
+    # Test cleanup writes directly to Postgres, outside the API's invalidation hooks.
+    from app.employee_counts import employee_count_cache
+
+    employee_count_cache.invalidate()
+    yield
+    employee_count_cache.invalidate()
+
+
+@pytest.fixture(autouse=True)
 def _trust_test_key(monkeypatch):
     """Stand in for Keycloak's JWKS endpoint: the API trusts TEST_KEY's public half; everything else is real."""
     from app import auth
