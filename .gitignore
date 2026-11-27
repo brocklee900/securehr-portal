@@ -19,3 +19,6 @@ scripts/mkcert.exe
 backend/integration-report.xml
 backend/report.xml
 gitea/rootCA.pem
+monitoring/secrets/*
+!monitoring/secrets/.gitkeep
+monitoring/alertmanager/*.local.yml

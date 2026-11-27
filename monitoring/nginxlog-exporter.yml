@@ -1,0 +1,13 @@
+listen:
+  port: 4040
+  address: 0.0.0.0
+namespaces:
+  - name: securehr_search
+    format: '"$request" $status $body_bytes_sent $request_time'
+    source:
+      files: [/var/log/securehr/employee-search.log]
+    labels:
+      service: securehr
+      slo: employee-search
+    # Exactly 500 ms is good. This bucket is required by the SLI rules.
+    histogram_buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]

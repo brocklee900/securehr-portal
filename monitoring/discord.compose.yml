@@ -1,0 +1,7 @@
+# Optional override; configure_monitoring.py must be run first.
+services:
+  alertmanager:
+    command:
+      - --config.file=/etc/alertmanager/discord.local.yml
+      - --storage.path=/alertmanager
+      - --cluster.listen-address=

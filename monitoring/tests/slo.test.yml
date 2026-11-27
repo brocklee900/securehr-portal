@@ -1,0 +1,477 @@
+{
+  "rule_files": [
+    "/etc/prometheus/rules/employee-search.yml"
+  ],
+  "evaluation_interval": "1m",
+  "tests": [
+    {
+      "name": "healthy traffic",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+1000x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+1000x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": []
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "expr": "securehr:employee_search:good_ratio_30d",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:good_ratio_30d\"}",
+              "value": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two percent slow successes page",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+1000x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+980x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "severity": "page",
+                "service": "securehr",
+                "slo": "employee-search"
+              },
+              "exp_annotations": {
+                "summary": "Employee directory search is burning its error budget",
+                "description": "Both the 1-hour and 5-minute burn rates reached 14.4 for the 99.9% SLO (status below 500 AND response within 500 ms).",
+                "runbook": "docs/MONITORING.md#incident-runbook",
+                "first_step": "Inspect Nginx upstream logs and PostgreSQL query latency."
+              }
+            }
+          ]
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 20
+            }
+          ]
+        },
+        {
+          "expr": "securehr:employee_search:good_ratio_30d",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:good_ratio_30d\"}",
+              "value": 0.98
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "fast 5xx only with no successful series still page",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"502\"}",
+          "values": "0+1000x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "severity": "page",
+                "service": "securehr",
+                "slo": "employee-search"
+              },
+              "exp_annotations": {
+                "summary": "Employee directory search is burning its error budget",
+                "description": "Both the 1-hour and 5-minute burn rates reached 14.4 for the 99.9% SLO (status below 500 AND response within 500 ms).",
+                "runbook": "docs/MONITORING.md#incident-runbook",
+                "first_step": "Inspect Nginx upstream logs and PostgreSQL query latency."
+              }
+            }
+          ]
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 1000
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "slow 5xx counts once alongside slow success",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+950x60"
+        },
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"500\"}",
+          "values": "0+50x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+900x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"500\"}",
+          "values": "0+0x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "severity": "page",
+                "service": "securehr",
+                "slo": "employee-search"
+              },
+              "exp_annotations": {
+                "summary": "Employee directory search is burning its error budget",
+                "description": "Both the 1-hour and 5-minute burn rates reached 14.4 for the 99.9% SLO (status below 500 AND response within 500 ms).",
+                "runbook": "docs/MONITORING.md#incident-runbook",
+                "first_step": "Inspect Nginx upstream logs and PostgreSQL query latency."
+              }
+            }
+          ]
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "exact 14.4 threshold pages",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+10000x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+9856x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "severity": "page",
+                "service": "securehr",
+                "slo": "employee-search"
+              },
+              "exp_annotations": {
+                "summary": "Employee directory search is burning its error budget",
+                "description": "Both the 1-hour and 5-minute burn rates reached 14.4 for the 99.9% SLO (status below 500 AND response within 500 ms).",
+                "runbook": "docs/MONITORING.md#incident-runbook",
+                "first_step": "Inspect Nginx upstream logs and PostgreSQL query latency."
+              }
+            }
+          ]
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 14.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "below 14.4 does not page",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+10000x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+9857x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": []
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 14.3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "short window spike alone does not page",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+1000x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+1000x55 55900+900x4"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": []
+        }
+      ],
+      "promql_expr_test": []
+    },
+    {
+      "name": "recovered short window stops page despite elevated long window",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+1000x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+980x55 54900+1000x4"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": []
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "idle traffic is unknown not successful",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+0x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+0x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": []
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m == securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": []
+        },
+        {
+          "expr": "securehr:employee_search:good_ratio_30d == 1",
+          "eval_time": "60m",
+          "exp_samples": []
+        }
+      ]
+    },
+    {
+      "name": "absent traffic does not page for burn",
+      "interval": "1m",
+      "input_series": [],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": []
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": []
+        }
+      ]
+    },
+    {
+      "name": "counter resets do not create a false burn",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\"}",
+          "values": "0+1000x29 0+1000x30"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\"}",
+          "values": "0+1000x29 0+1000x30"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": []
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "instances aggregate by request volume",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"500\",instance=\"a\"}",
+          "values": "0+100x60"
+        },
+        {
+          "series": "securehr_search_http_response_count_total{job=\"nginx-search\",status=\"200\",instance=\"b\"}",
+          "values": "0+900x60"
+        },
+        {
+          "series": "securehr_search_http_response_time_seconds_hist_bucket{job=\"nginx-search\",le=\"0.5\",status=\"200\",instance=\"b\"}",
+          "values": "0+900x60"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "60m",
+          "alertname": "EmployeeSearchSLOBurnRate",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "severity": "page",
+                "service": "securehr",
+                "slo": "employee-search"
+              },
+              "exp_annotations": {
+                "summary": "Employee directory search is burning its error budget",
+                "description": "Both the 1-hour and 5-minute burn rates reached 14.4 for the 99.9% SLO (status below 500 AND response within 500 ms).",
+                "runbook": "docs/MONITORING.md#incident-runbook",
+                "first_step": "Inspect Nginx upstream logs and PostgreSQL query latency."
+              }
+            }
+          ]
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "securehr:employee_search:burn_rate_5m",
+          "eval_time": "60m",
+          "exp_samples": [
+            {
+              "labels": "{__name__=\"securehr:employee_search:burn_rate_5m\"}",
+              "value": 100
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

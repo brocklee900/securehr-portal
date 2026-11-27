@@ -188,12 +188,19 @@ docker compose exec -u root jenkins chmod 666 /var/run/docker.sock   # if Jenkin
 
 ---
 
+## Employee search monitoring
+
+The directory SLO is **99.9% of valid search requests returning status below 500 within 500 ms, over 30 days**, measured at Nginx. The optional `monitoring` Compose profile adds Prometheus and Alertmanager; the page condition requires **both 1-hour and 5-minute burn rates >= 14.4**. Discord pages mention the on-call engineer and include the first runbook step: inspect Nginx upstream logs and PostgreSQL query latency.
+
+See **[monitoring setup and incident runbook](docs/MONITORING.md)** for starting the services, enabling Discord, viewing the SLI/error budget, and enabling query statistics on an existing database. Delivery defaults to local-only until you run `python scripts/configure_monitoring.py` and start with the Discord override. Webhook credentials stay in git-ignored local files.
+
 ## Testing
 
 | Layer | Command | What it covers |
 |---|---|---|
 | Unit (85) | `cd backend && pytest -q` | Role logic, token claims, denial auditing, new-employee validation rules, salary-change rules and the LDAP lookup (against an in-memory directory). No database needed; integration tests are skipped. |
 | Integration (189) | `bash scripts/run_integration_tests.sh` | Runs in Docker: a throwaway Postgres with a small fixed dataset and your real security rules, real signed tokens through the real validation code. |
+| Monitoring | `python scripts/test_monitoring.py` | SLO rule scenarios, real Nginx log collection and rotation, and Discord payloads sent to a local mock webhook. |
 
 The integration suite checks that: tokens with a wrong audience, wrong issuer, bad signature, `alg: none` or expired are rejected; every data endpoint needs a login; search, paging and department filters return exactly the expected people (including an employee who moved departments); employees never get salaries; managers see only their **current** department (former managers and missing employee numbers see nothing); the audit log is HR-only, append-only, records denied requests, and audits its own reads; and, directly in Postgres without the API, row-level security holds and the app's database user cannot update or delete HR data or bypass the rules. For creating employees it checks that all four tables are filled together or not at all, that only `hr_admin` can do it (API and database each, separately), that clients cannot choose the employee number, and that the audit entry holds no personal data. For salary changes it checks that the old salary is closed and the new one added together, that only `hr_admin` can do it (API and database separately), that own and other HR admins' salaries are refused (and refused if LDAP is down), that past dates, a second pending change, and editing amounts or start dates are refused in the database itself, and that the audit entry holds no amounts. The integration tests replace LDAP with a fake directory (employee 10004 plays an HR admin).
 

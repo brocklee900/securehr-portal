@@ -1,0 +1,20 @@
+route:
+  receiver: discord-oncall
+  group_by: [alertname, service, slo]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 1h
+receivers:
+  - name: discord-oncall
+    discord_configs:
+      - webhook_url_file: /run/secrets/discord_webhook_url
+        send_resolved: true
+        username: SecureHR monitoring
+        title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+        content: '{{ if and (eq .Status "firing") (eq .CommonLabels.severity "page") }}<@__DISCORD_ONCALL_USER_ID__>{{ end }}'
+        message: |-
+          {{ range .Alerts }}**{{ .Annotations.summary }}**
+          {{ .Annotations.description }}
+          {{ if .Annotations.first_step }}First step: {{ .Annotations.first_step }}{{ end }}
+          {{ if .Annotations.runbook }}Runbook: {{ .Annotations.runbook }}{{ end }}
+          {{ end }}
