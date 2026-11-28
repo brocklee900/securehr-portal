@@ -1,13 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Department, EmployeeRow, EmployeeSortColumn, SortDirection } from "../api";
+import { Flex,  Table, TableProps, Tag } from "antd";
 
-const columns: { key: EmployeeSortColumn; label: string }[] = [
-  { key: "name", label: "Name" },
-  { key: "title", label: "Title" },
-  { key: "department", label: "Department" },
-  { key: "hire_date", label: "Hired Date" },
-];
+
+const PAGE_SIZE = 25;
 
 export default function EmployeeSearch() {
   const [q, setQ] = useState("");
@@ -27,6 +24,7 @@ export default function EmployeeSearch() {
   const debouncing = q !== searchText.q || title !== searchText.title;
   const busy = loading || debouncing;
 
+  
   useEffect(() => { api.departments().then(setDepts).catch((e) => setError(String(e))); }, []);
   useEffect(() => {
     if (!debouncing) return;
@@ -56,16 +54,64 @@ export default function EmployeeSearch() {
     return () => { active = false; };
   }, [searchText, dept, hiredFrom, hiredTo, page, sort, invalidDateRange]);
 
-  function sortBy(column: EmployeeSortColumn) {
-    setSort((previous) => ({
-      column,
-      direction: previous.column === column && previous.direction === "asc" ? "desc" : "asc",
-    }));
-    setPage(1);
-  }
+  const sortOrderFor = (col: EmployeeSortColumn) =>
+    sort.column === col ? (sort.direction === "asc" ? "ascend" : "descend") : null;
+
+  const tableColumns: TableProps<EmployeeRow>["columns"] = [
+    {
+      title: "Name",
+      key: "name",
+      sorter: true,
+      sortOrder: sortOrderFor("name"),
+      sortDirections: ["ascend", "descend"],
+      render: (_, r) => (
+        <Link to={`/employees/${r.emp_no}`}>{r.last_name} {r.first_name}</Link>
+      ),
+    },
+    {
+      title: "Title",
+      dataIndex: "title",
+      key: "title",
+      sorter: true,
+      sortOrder: sortOrderFor("title"),
+      sortDirections: ["ascend", "descend"],
+    },
+    {
+      title: "Department",
+      dataIndex: "dept_name",
+      key: "department",
+      sorter: true,
+      sortOrder: sortOrderFor("department"),
+      sortDirections: ["ascend", "descend"],
+    },
+    {
+      title: "Hired Date",
+      dataIndex: "hire_date",
+      key: "hire_date",
+      sorter: true,
+      sortOrder: sortOrderFor("hire_date"),
+      sortDirections: ["ascend", "descend"],
+      render: (v: string) => new Date(v).toLocaleDateString(),
+    },
+  ];
+
+  const handleTableChange: TableProps<EmployeeRow>["onChange"] = (pager, _filters, sorter) => {
+    const s = Array.isArray(sorter) ? sorter[0] : sorter;
+    const column = (s?.order ? s.columnKey : "name") as EmployeeSortColumn;
+    const direction: SortDirection = s?.order === "descend" ? "desc" : "asc";
+
+    if (column !== sort.column || direction !== sort.direction) {
+      setSort({ column, direction });
+      setPage(1); // new sort order: start from the first page
+    } else {
+      setPage(pager.current ?? 1);
+    }
+  };
+
 
   return (
     <section>
+    
       <h2>Employee directory</h2>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end" }}>
         <label style={{ display: "grid", gap: 4 }}>
@@ -95,42 +141,32 @@ export default function EmployeeSearch() {
             aria-invalid={invalidDateRange} aria-describedby="hire-date-help"
             onChange={(e) => { setHiredTo(e.target.value); setPage(1); }} />
         </label>
+
       </div>
+      
       <p id="hire-date-help" role={invalidDateRange ? "alert" : undefined}
         style={{ color: invalidDateRange ? "crimson" : undefined }}>
         {invalidDateRange ? "Hired from must be on or before Hired to." : "Hire dates include both endpoints. Leave either date blank for no limit."}
       </p>
       {error && <p role="alert" style={{ color: "crimson" }}>{error}</p>}
-      <table width="100%" aria-busy={busy} style={{ marginTop: 12, borderCollapse: "collapse" }}>
-        <thead><tr>{columns.map(({ key, label }) => (
-          <th key={key} scope="col" align="left" aria-sort={sort.column === key ? (sort.direction === "asc" ? "ascending" : "descending") : undefined}>
-            <button
-              type="button"
-              onClick={() => sortBy(key)}
-              aria-label={`${label}, sort ${sort.column === key && sort.direction === "asc" ? "descending" : "ascending"}`}
-              style={{ border: 0, background: "none", padding: "4px 0", font: "inherit", color: "inherit", cursor: "pointer" }}
-            >
-              {label} <span aria-hidden="true">{sort.column === key ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}</span>
-            </button>
-          </th>
-        ))}</tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.emp_no}>
-              <td><Link to={`/employees/${r.emp_no}`}>{r.last_name}, {r.first_name}</Link></td>
-              <td>{r.title}</td><td>{r.dept_name}</td><td>{r.hire_date}</td>
-            </tr>
-          ))}
-          {!busy && !error && !invalidDateRange && rows.length === 0 && (
-            <tr><td colSpan={columns.length}>No employees match these filters.</td></tr>
-          )}
-        </tbody>
-      </table>
-      <p>
-        <button disabled={busy || invalidDateRange || page === 1} onClick={() => setPage(page - 1)}>Prev</button>{" "}
-        Page {page} of {Math.max(1, Math.ceil(total / 25))} ({total.toLocaleString()} results){" "}
-        <button disabled={busy || invalidDateRange || page * 25 >= total} onClick={() => setPage(page + 1)}>Next</button>
-      </p>
+      
+      
+      <Table<EmployeeRow>
+        columns={tableColumns}
+        dataSource={rows}
+        rowKey="emp_no"
+        loading={busy}
+        onChange={handleTableChange}
+        pagination={{
+          current: page,
+          pageSize: PAGE_SIZE,
+          total,
+          showSizeChanger: false,
+          showTotal: (t) => `Total ${t.toLocaleString()} results`,
+        }}
+      />
+      
     </section>
+
   );
 }

@@ -1,6 +1,8 @@
 import { FormEvent, ReactNode, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Form, Link } from "react-router-dom";
 import { api, ApiError, CreatedEmployee, Department } from "../api";
+import { Button, DatePicker, Input, Select } from "antd";
+import type { FormProps } from 'antd';
 
 // Same limits as the API (backend/app/routers/hr_admin.py). They are repeated here only to give instant feedback;
 // the API checks everything again and is the one that decides.
@@ -75,6 +77,7 @@ export default function NewEmployee() {
   const [titles, setTitles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState("");
 
+
   useEffect(() => {
     Promise.all([api.departments(), api.hireTitles()])
       .then(([d, t]) => { setDepts(d); setTitles(t); })
@@ -143,6 +146,7 @@ export default function NewEmployee() {
     onChange: (e: { target: { value: string } }) => set(key, e.target.value),
   });
 
+
   return (
     <section style={{ maxWidth: 520 }}>
       <h2>New employee</h2>
@@ -192,6 +196,8 @@ export default function NewEmployee() {
         <button type="submit" disabled={submitting || !!loadError}>{submitting ? "Creating…" : "Create employee"}</button>{" "}
         <Link to="/">Cancel</Link>
       </form>
+
+      
     </section>
   );
 }
