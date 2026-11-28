@@ -8,6 +8,7 @@ services:
   postgres:
     <<: *restart
     image: postgres:16
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     environment:
       POSTGRES_DB: employees
       POSTGRES_USER: postgres
@@ -16,7 +17,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d employees"]
       interval: 5s
@@ -108,15 +109,67 @@ services:
   # ---------- Edge ----------
   nginx:
     <<: *restart
-    image: nginx:1.27-alpine
+    build: ./nginx
     ports: ["443:443", "80:80"]
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/slo.conf:/etc/nginx/slo.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
-    depends_on: [backend, frontend, keycloak, jenkins, gitea]
+      - nginxlogs:/var/log/securehr
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    healthcheck:
+      test: ["CMD-SHELL", "test -r /var/log/securehr/employee-search.log && test -s /var/run/nginx.pid"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+    # Gitea is resolved on demand by Nginx and has its own setup step.
+    # Starting the portal or monitoring must not build the optional Git server.
+    depends_on: [backend, frontend, keycloak, jenkins]
     networks:
       default:
         aliases: [auth.localhost, gitea.localhost, jenkins.localhost]   # lets containers (Jenkins, Gitea) reach each other via the public names
+
+  # ---------- Monitoring (docker compose --profile monitoring up -d) ----------
+  nginx-log-exporter:
+    <<: *restart
+    profiles: ["monitoring"]
+    image: quay.io/martinhelmich/prometheus-nginxlog-exporter:v1.11.0
+    command: ["-config-file", "/etc/nginxlog-exporter.yml"]
+    # The exporter expands file paths at startup; the log must already exist.
+    depends_on:
+      nginx: { condition: service_healthy }
+    volumes:
+      - ./monitoring/nginxlog-exporter.yml:/etc/nginxlog-exporter.yml:ro
+      - nginxlogs:/var/log/securehr:ro
+
+  prometheus:
+    <<: *restart
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.13.5
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=35d
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheusdata:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+
+  alertmanager:
+    <<: *restart
+    profiles: ["monitoring"]
+    image: prom/alertmanager:v0.35.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --cluster.listen-address=
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - ./monitoring/secrets:/run/secrets:ro
+      - alertmanagerdata:/alertmanager
+    ports: ["127.0.0.1:9093:9093"]
 
   # ---------- Git server ----------
   gitea:
@@ -164,3 +217,6 @@ volumes:
   ldapconf:
   jenkinshome:
   giteadata:
+  nginxlogs:
+  prometheusdata:
+  alertmanagerdata:

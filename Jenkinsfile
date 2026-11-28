@@ -18,6 +18,9 @@ pipeline {
       steps { sh 'bash scripts/run_integration_tests.sh' }
       post { always { junit allowEmptyResults: true, testResults: 'backend/integration-report.xml' } }
     }
+    stage('Monitoring checks') {
+      steps { sh 'python3 scripts/test_monitoring.py' }
+    }
     stage('Build images') {
       steps { sh 'docker build -t securehr/backend:${GIT_COMMIT} backend && docker build -t securehr/frontend:${GIT_COMMIT} frontend' }
     }

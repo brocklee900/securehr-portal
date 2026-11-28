@@ -1,0 +1,79 @@
+groups:
+  - name: employee-search-slo
+    rules:
+      # Good = (status < 500) AND (request_time <= 0.5 seconds).
+      # Subtract once from total, so a slow 5xx is not counted twice.
+      # The fallback handles traffic consisting entirely of 5xx responses.
+      # Zero traffic stays NaN (unknown); it never fabricates 100% compliance.
+      - record: securehr:employee_search:bad_ratio_5m
+        expr: |
+          clamp_min(
+            (sum(increase(securehr_search_http_response_count_total{job="nginx-search"}[5m])) - (
+              sum(increase(securehr_search_http_response_time_seconds_hist_bucket{job="nginx-search",status=~"[1-4]..",le="0.5"}[5m]))
+              or (0 * sum(increase(securehr_search_http_response_count_total{job="nginx-search"}[5m])))
+            )) / sum(increase(securehr_search_http_response_count_total{job="nginx-search"}[5m])),
+            0
+          )
+      - record: securehr:employee_search:bad_ratio_1h
+        expr: |
+          clamp_min(
+            (sum(increase(securehr_search_http_response_count_total{job="nginx-search"}[1h])) - (
+              sum(increase(securehr_search_http_response_time_seconds_hist_bucket{job="nginx-search",status=~"[1-4]..",le="0.5"}[1h]))
+              or (0 * sum(increase(securehr_search_http_response_count_total{job="nginx-search"}[1h])))
+            )) / sum(increase(securehr_search_http_response_count_total{job="nginx-search"}[1h])),
+            0
+          )
+      - record: securehr:employee_search:burn_rate_5m
+        expr: securehr:employee_search:bad_ratio_5m * 1000
+      - record: securehr:employee_search:burn_rate_1h
+        expr: securehr:employee_search:bad_ratio_1h * 1000
+      - alert: EmployeeSearchSLOBurnRate
+        expr: |
+          (securehr:employee_search:burn_rate_1h >= 14.4)
+          and (securehr:employee_search:burn_rate_5m >= 14.4)
+        labels:
+          severity: page
+          service: securehr
+          slo: employee-search
+        annotations:
+          summary: Employee directory search is burning its error budget
+          description: Both the 1-hour and 5-minute burn rates reached 14.4 for the 99.9% SLO (status below 500 AND response within 500 ms).
+          runbook: docs/MONITORING.md#incident-runbook
+          first_step: Inspect Nginx upstream logs and PostgreSQL query latency.
+
+  # The 30-day calculation runs less often than the paging rules.
+  - name: employee-search-window
+    interval: 5m
+    rules:
+      - record: securehr:employee_search:requests_30d
+        expr: sum(increase(securehr_search_http_response_count_total{job="nginx-search"}[30d]))
+      - record: securehr:employee_search:good_ratio_30d
+        expr: |
+          (
+            sum(increase(securehr_search_http_response_time_seconds_hist_bucket{job="nginx-search",status=~"[1-4]..",le="0.5"}[30d]))
+            or (0 * securehr:employee_search:requests_30d)
+          ) / securehr:employee_search:requests_30d
+      - record: securehr:employee_search:error_budget_remaining_ratio_30d
+        expr: 1 - ((1 - securehr:employee_search:good_ratio_30d) / 0.001)
+
+  - name: monitoring-health
+    rules:
+      - alert: EmployeeSearchTelemetryUnavailable
+        expr: up{job="nginx-search"} == 0 or absent(up{job="nginx-search"})
+        for: 2m
+        labels: {severity: page, service: securehr, slo: employee-search}
+        annotations:
+          summary: Employee search telemetry is unavailable
+          description: Inspect the nginx-log-exporter container and shared Nginx log volume. SLO data is unknown while collection is down.
+      - alert: EmployeeSearchLogParseErrors
+        expr: sum(increase(securehr_search_parse_errors_total[5m])) > 0
+        labels: {severity: page, service: securehr, slo: employee-search}
+        annotations:
+          summary: Employee search access logs cannot be parsed
+          description: Compare nginx/slo.conf with monitoring/nginxlog-exporter.yml before trusting the SLI.
+      - alert: DiscordNotificationFailures
+        expr: sum(increase(alertmanager_notifications_failed_total{integration="discord"}[5m])) > 0
+        labels: {severity: warning, service: securehr}
+        annotations:
+          summary: Discord alert delivery is failing
+          description: Check Alertmanager logs and the webhook. This alert cannot reliably notify through a broken Discord receiver; inspect Prometheus locally.

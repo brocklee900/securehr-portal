@@ -1,0 +1,2 @@
+# Certificates are mounted at runtime; keep private keys out of the build context.
+certs/

@@ -1,0 +1,10 @@
+# Until configured, alerts are visible locally but no notifications are sent.
+# Run python scripts/configure_monitoring.py to enable the Discord receiver.
+route:
+  receiver: local-only
+  group_by: [alertname, service, slo]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 1h
+receivers:
+  - name: local-only

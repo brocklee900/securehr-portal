@@ -1,0 +1,28 @@
+rule_files:
+  - /etc/prometheus/rules/employee-search.yml
+evaluation_interval: 1h
+tests:
+  - name: Old failures expire from the rolling 30-day window
+    interval: 1h
+    input_series:
+      - series: securehr_search_http_response_count_total{job="nginx-search",status="200"}
+        values: 0+1000x840
+      # First five days are slow; the following 30 days are all fast successes.
+      - series: securehr_search_http_response_time_seconds_hist_bucket{job="nginx-search",status="200",le="0.5"}
+        values: 0+0x120 1000+1000x719
+    promql_expr_test:
+      - expr: round(securehr:employee_search:good_ratio_30d * 1000) / 1000
+        eval_time: 720h
+        exp_samples:
+          - labels: '{}'
+            value: 0.833
+      - expr: securehr:employee_search:good_ratio_30d
+        eval_time: 840h
+        exp_samples:
+          - labels: '{__name__="securehr:employee_search:good_ratio_30d"}'
+            value: 1
+      - expr: securehr:employee_search:error_budget_remaining_ratio_30d
+        eval_time: 840h
+        exp_samples:
+          - labels: '{__name__="securehr:employee_search:error_budget_remaining_ratio_30d"}'
+            value: 1
