@@ -2,8 +2,11 @@ import Keycloak from "keycloak-js";
 
 export type Role = "employee" | "manager" | "hr_admin";
 
+/** Keycloak lives next to the portal: portal.<domain> -> auth.<domain> (works for localhost and the shared server). */
+const authUrl = `https://${window.location.hostname.replace(/^portal\./, "auth.")}`;
+
 export const keycloak = new Keycloak({
-  url: "https://auth.localhost",
+  url: authUrl,
   realm: "securehr",
   clientId: "securehr-portal",
 });

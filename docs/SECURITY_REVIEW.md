@@ -20,7 +20,7 @@ Review date: October 30, 2026 (finding 16 added November 20, 2026, finding 17 No
 | 6 | Jenkins has the Docker socket mounted and opened to all users in the container | High (local demo) | **Accepted for the demo**, see below |
 | 7 | Any signed-in manager or employee can trigger Jenkins builds | Medium | **Open**: recommended change below |
 | 8 | TLS stops at Nginx; traffic between containers is plain HTTP | Medium | **Accepted** with note |
-| 9 | Keycloak runs in `start-dev` mode and the frontend runs the Vite dev server | Medium | **Accepted for the demo** |
+| 9 | Keycloak runs in `start-dev` mode and the frontend runs the Vite dev server | Medium | **Accepted on laptops**; the shared server runs production modes (README step 8) |
 | 10 | Multi-factor authentication not implemented | Low to Medium | **Descoped** |
 | 11 | No secrets manager; secrets live in `.env` | Low to Medium | **Partial** |
 | 12 | Frontend dependencies: 4 npm advisories (3 moderate, 1 high), not triaged; Trivy scans only the backend image | Medium | **Open** |
@@ -76,7 +76,7 @@ Review date: October 30, 2026 (finding 16 added November 20, 2026, finding 17 No
 
 **8. Internal traffic is not encrypted.** Browsers reach every service over TLS through Nginx. Inside the Docker network, Nginx to backend, backend to Keycloak (key fetch) and so on use plain HTTP, and Keycloak's HTTP port is enabled. The requirement "TLS on all services" is therefore met at the network edge, not hop by hop.
 
-**9. Development modes.** Keycloak is started with `start-dev` and the frontend serves the Vite dev server. Production would use `start` with real certificates and a built static frontend.
+**9. Development modes.** On laptops Keycloak is started with `start-dev` and the frontend serves the Vite dev server. The shared cloud server (README step 8) sets `KEYCLOAK_COMMAND=start` and `FRONTEND_TARGET=prod` (static files built at image time) and uses Let's Encrypt certificates. Not yet verified on a running server.
 
 **10. No MFA.** Listed in the abstract as an additional feature and not implemented. Because every login (portal and Jenkins) goes through Keycloak, enabling an OTP required action in the realm would cover both; it was left out to keep demos simple.
 

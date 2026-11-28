@@ -13,9 +13,15 @@ REALM=securehr
 SOURCE=keycloak   # label on Gitea's sign-in button; also part of the callback URL registered below
 
 [ -f .env ] || { echo "No .env found. Do README step 1 first."; exit 1; }
-[ -f jenkins/rootCA.pem ] || { echo "jenkins/rootCA.pem missing. Do README step 1 first (cp \"\$(mkcert -CAROOT)/rootCA.pem\" jenkins/rootCA.pem)."; exit 1; }
 
 env_get() { grep -E "^$1=" .env | tail -1 | cut -d= -f2- | tr -d '\r' || true; }
+DOMAIN="$(env_get SECUREHR_DOMAIN)"; DOMAIN="${DOMAIN:-localhost}"
+
+# Locally the services trust each other through the mkcert CA. On the shared server (a real domain with Let's Encrypt
+# certificates) no extra CA is needed.
+if [ "$DOMAIN" = localhost ] && [ ! -f jenkins/rootCA.pem ]; then
+  echo "jenkins/rootCA.pem missing. Do README step 1 first (cp \"\$(mkcert -CAROOT)/rootCA.pem\" jenkins/rootCA.pem)."; exit 1
+fi
 
 echo "== 1/4 Secrets in .env"
 for v in GITEA_SECRET_KEY GITEA_OIDC_SECRET; do
@@ -30,7 +36,7 @@ done
 SECRET="$(env_get GITEA_OIDC_SECRET)"
 
 echo "== 2/4 Building and starting the stack"
-cp jenkins/rootCA.pem gitea/rootCA.pem
+if [ -f jenkins/rootCA.pem ]; then cp jenkins/rootCA.pem gitea/rootCA.pem; fi
 docker compose up -d --build
 
 echo "== 3/4 Keycloak client '$REALM/gitea'"
@@ -60,8 +66,8 @@ if [ -z "$CLIENT_ID" ]; then
   "secret": "$SECRET",
   "standardFlowEnabled": true,
   "directAccessGrantsEnabled": false,
-  "redirectUris": ["https://gitea.localhost/user/oauth2/$SOURCE/callback"],
-  "webOrigins": ["https://gitea.localhost"],
+  "redirectUris": ["https://gitea.$DOMAIN/user/oauth2/$SOURCE/callback"],
+  "webOrigins": ["https://gitea.$DOMAIN"],
   "protocolMappers": [{
     "name": "roles",
     "protocol": "openid-connect",
@@ -81,7 +87,7 @@ JSON
 else
   # Client exists (earlier run): keep its secret and redirect URI in sync with .env
   docker compose exec -T keycloak $KCADM update "clients/$CLIENT_ID" -r $REALM -f - <<JSON
-{ "secret": "$SECRET", "redirectUris": ["https://gitea.localhost/user/oauth2/$SOURCE/callback"] }
+{ "secret": "$SECRET", "redirectUris": ["https://gitea.$DOMAIN/user/oauth2/$SOURCE/callback"], "webOrigins": ["https://gitea.$DOMAIN"] }
 JSON
   echo "   already existed; secret and redirect URI re-synced"
 fi
@@ -95,7 +101,8 @@ done
 [ -n "$healthy" ] || { echo "Gitea did not become healthy: docker compose logs --no-log-prefix gitea | tail -40"; exit 1; }
 
 # The secret is read from the container's own environment, not passed on this machine's command line.
-ARGS='--name keycloak --provider openidConnect --key gitea --secret "$GITEA_OIDC_SECRET" --auto-discover-url https://auth.localhost/realms/securehr/.well-known/openid-configuration --scopes openid --scopes email --scopes profile --group-claim-name roles --admin-group hr_admin'   # one line: it is pasted into sh -c below
+# (Single quotes keep $GITEA_OIDC_SECRET for the container; the domain is spliced in from this script.)
+ARGS='--name keycloak --provider openidConnect --key gitea --secret "$GITEA_OIDC_SECRET" --auto-discover-url https://auth.'"$DOMAIN"'/realms/securehr/.well-known/openid-configuration --scopes openid --scopes email --scopes profile --group-claim-name roles --admin-group hr_admin'   # one line: it is pasted into sh -c below
 SRC_ID="$(docker compose exec -T -u git gitea gitea admin auth list | tr -d '\r' | awk -v n="$SOURCE" 'NR>1 && $2==n {print $1}')"
 if [ -z "$SRC_ID" ]; then
   docker compose exec -T -u git gitea sh -c "gitea admin auth add-oauth $ARGS"
@@ -103,11 +110,11 @@ else
   docker compose exec -T -u git gitea sh -c "gitea admin auth update-oauth --id $SRC_ID $ARGS"
 fi
 
-cat <<'MSG'
+cat <<MSG
 
 Done. Next:
   * Jenkins was rebuilt, so re-open the Docker socket for builds:
       docker compose exec -u root jenkins chmod 666 /var/run/docker.sock
-  * Open https://gitea.localhost -> "Sign in with keycloak" as alice.hr (she becomes Gitea site admin).
+  * Open https://gitea.$DOMAIN -> "Sign in with keycloak" as alice.hr (she becomes Gitea site admin).
   * Then follow README step 7 (create the repo, add the Jenkins token, switch the job to Gitea).
 MSG

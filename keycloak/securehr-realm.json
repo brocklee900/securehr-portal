@@ -23,9 +23,9 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "redirectUris": ["https://portal.localhost/*"],
-      "webOrigins": ["https://portal.localhost"],
-      "attributes": { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "https://portal.localhost/*" },
+      "redirectUris": ["https://portal.${SECUREHR_DOMAIN}/*"],
+      "webOrigins": ["https://portal.${SECUREHR_DOMAIN}"],
+      "attributes": { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "https://portal.${SECUREHR_DOMAIN}/*" },
       "protocolMappers": [
         {
           "name": "aud-securehr-portal",
@@ -47,8 +47,8 @@
       "publicClient": false,
       "secret": "${JENKINS_OIDC_SECRET}",
       "standardFlowEnabled": true,
-      "redirectUris": ["https://jenkins.localhost/securityRealm/finishLogin"],
-      "webOrigins": ["https://jenkins.localhost"]
+      "redirectUris": ["https://jenkins.${SECUREHR_DOMAIN}/securityRealm/finishLogin"],
+      "webOrigins": ["https://jenkins.${SECUREHR_DOMAIN}"]
     }
   ],
   "users": [

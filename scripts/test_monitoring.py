@@ -78,7 +78,9 @@ def main():
             temp = Path(folder)
             # Exercise the production server/location/log configuration over HTTP,
             # removing only TLS setup so the test never needs personal certificates.
-            nginx_conf = (ROOT / "nginx/nginx.conf").read_text()
+            # The template's domain is filled in exactly as the nginx image does at startup (the fixture uses localhost).
+            nginx_conf = (ROOT / "nginx/templates/nginx.conf.template").read_text()
+            nginx_conf = nginx_conf.replace("${SECUREHR_DOMAIN}", "localhost")
             nginx_conf = "\n".join(line for line in nginx_conf.splitlines()
                                    if not line.strip().startswith(("ssl_certificate", "ssl_protocols")))
             nginx_conf = nginx_conf.replace("listen 443 ssl;", "listen 8080;").replace("listen 80 ", "listen 8081 ")

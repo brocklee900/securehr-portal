@@ -1,0 +1,12 @@
+# Files that run inside Linux containers or in bash must keep Unix line endings (LF), even when the repository is
+# checked out on Windows. Windows line endings (CRLF) make scripts fail with "not found" or "$'\r': command not found".
+*.sh        text eol=lf
+*.envsh     text eol=lf
+Dockerfile  text eol=lf
+*.conf      text eol=lf
+*.template  text eol=lf
+*.ldif      text eol=lf
+*.sql       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+.env.example text eol=lf

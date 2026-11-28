@@ -1,5 +1,8 @@
 name: securehr
 
+# Hostnames are portal./auth./gitea./jenkins. + SECUREHR_DOMAIN (from .env; "localhost" when unset), so the same
+# files run on a laptop and on the shared server. See README "Shared cloud server".
+
 x-restart: &restart
   restart: unless-stopped
 
@@ -66,18 +69,20 @@ services:
   keycloak:
     <<: *restart
     image: quay.io/keycloak/keycloak:26.0
-    command: ["start-dev", "--import-realm"]   # switch to `start` + real certs for staging
+    # start-dev locally; KEYCLOAK_COMMAND=start on the shared server (production mode).
+    command: ["${KEYCLOAK_COMMAND:-start-dev}", "--import-realm"]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
-      KC_HOSTNAME: https://auth.localhost
+      KC_HOSTNAME: https://auth.${SECUREHR_DOMAIN:-localhost}
       KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       JENKINS_OIDC_SECRET: ${JENKINS_OIDC_SECRET}
+      SECUREHR_DOMAIN: ${SECUREHR_DOMAIN:-localhost}   # fills the redirect URLs in the realm import
     volumes:
       - ./keycloak/securehr-realm.json:/opt/keycloak/data/import/securehr-realm.json:ro
     depends_on: [keycloak-db, ldap]
@@ -88,10 +93,10 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql://portal_app:${PORTAL_APP_PASSWORD}@postgres:5432/employees
-      OIDC_ISSUER: https://auth.localhost/realms/securehr
+      OIDC_ISSUER: https://auth.${SECUREHR_DOMAIN:-localhost}/realms/securehr
       OIDC_JWKS_URL: http://keycloak:8080/realms/securehr/protocol/openid-connect/certs
       OIDC_AUDIENCE: securehr-portal
-      CORS_ORIGINS: '["https://portal.localhost"]'
+      CORS_ORIGINS: '["https://portal.${SECUREHR_DOMAIN:-localhost}"]'
       LDAP_URL: ldap://ldap:389
       LDAP_BIND_DN: cn=readonly,dc=securehr,dc=local
       LDAP_BIND_PASSWORD: ${LDAP_READONLY_PASSWORD}
@@ -102,7 +107,11 @@ services:
 
   frontend:
     <<: *restart
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: ${FRONTEND_TARGET:-dev}   # dev = Vite dev server (live reload); prod = built files, for the shared server
+    environment:
+      SECUREHR_DOMAIN: ${SECUREHR_DOMAIN:-localhost}
     volumes:
       - ./frontend/src:/app/src
 
@@ -111,10 +120,15 @@ services:
     <<: *restart
     build: ./nginx
     ports: ["443:443", "80:80"]
+    environment:
+      SECUREHR_DOMAIN: ${SECUREHR_DOMAIN:-localhost}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx          # the template becomes /etc/nginx/nginx.conf
+      NGINX_ENVSUBST_FILTER: SECUREHR_DOMAIN          # substitute only this variable
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
       - ./nginx/slo.conf:/etc/nginx/slo.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro      # Let's Encrypt HTTP challenge files
       - nginxlogs:/var/log/securehr
     logging:
       driver: json-file
@@ -129,7 +143,10 @@ services:
     depends_on: [backend, frontend, keycloak, jenkins]
     networks:
       default:
-        aliases: [auth.localhost, gitea.localhost, jenkins.localhost]   # lets containers (Jenkins, Gitea) reach each other via the public names
+        aliases:
+          - auth.${SECUREHR_DOMAIN:-localhost}
+          - gitea.${SECUREHR_DOMAIN:-localhost}
+          - jenkins.${SECUREHR_DOMAIN:-localhost}   # lets containers (Jenkins, Gitea) reach each other via the public names
 
   # ---------- Monitoring (docker compose --profile monitoring up -d) ----------
   nginx-log-exporter:
@@ -176,7 +193,7 @@ services:
     <<: *restart
     build: ./gitea   # official image + the local mkcert CA, so Gitea can call Keycloak and Jenkins over HTTPS
     environment:
-      GITEA__server__ROOT_URL: https://gitea.localhost/
+      GITEA__server__ROOT_URL: https://gitea.${SECUREHR_DOMAIN:-localhost}/
       GITEA__server__DISABLE_SSH: "true"                  # HTTPS only; no extra port to publish
       GITEA__database__DB_TYPE: sqlite3                   # demo scale; data lives in the giteadata volume
       GITEA__security__INSTALL_LOCK: "true"               # skip the web installer
@@ -204,6 +221,7 @@ services:
       CASC_JENKINS_CONFIG: /var/jenkins_home/casc.yaml
       JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD}
       JENKINS_OIDC_SECRET: ${JENKINS_OIDC_SECRET}
+      SECUREHR_DOMAIN: ${SECUREHR_DOMAIN:-localhost}   # read by jenkins/casc.yaml
     volumes:
       - jenkinshome:/var/jenkins_home
       - ./jenkins/casc.yaml:/var/jenkins_home/casc.yaml:ro

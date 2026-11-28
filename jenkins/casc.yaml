@@ -6,7 +6,7 @@ jenkins:
       clientSecret: ${JENKINS_OIDC_SECRET}
       serverConfiguration:
         wellKnown:
-          wellKnownOpenIDConfigurationUrl: https://auth.localhost/realms/securehr/.well-known/openid-configuration
+          wellKnownOpenIDConfigurationUrl: https://auth.${SECUREHR_DOMAIN:-localhost}/realms/securehr/.well-known/openid-configuration
       userNameField: preferred_username
       groupsFieldName: roles
       logoutFromOpenidProvider: true
@@ -30,4 +30,4 @@ jenkins:
               - group: employee
 unclassified:
   location:
-    url: https://jenkins.localhost/
+    url: https://jenkins.${SECUREHR_DOMAIN:-localhost}/

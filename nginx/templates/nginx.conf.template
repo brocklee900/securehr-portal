@@ -1,3 +1,5 @@
+# Template: the nginx image fills in ${SECUREHR_DOMAIN} at startup (see docker-compose.yml) and writes
+# /etc/nginx/nginx.conf. Only SECUREHR_DOMAIN is substituted; nginx's own $variables are left alone.
 events {}
 http {
   ssl_certificate     /etc/nginx/certs/securehr.pem;
@@ -13,11 +15,16 @@ http {
 
   include /etc/nginx/slo.conf;
 
-  server { listen 80 default_server; return 301 https://$host$request_uri; }
+  server {
+    listen 80 default_server;
+    # Let's Encrypt proves domain ownership over plain HTTP (scripts/get-public-certs.sh); everything else goes to HTTPS.
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 301 https://$host$request_uri; }
+  }
 
   server {
     listen 443 ssl;
-    server_name portal.localhost;
+    server_name portal.${SECUREHR_DOMAIN};
     # Query strings, bearer tokens and employee identifiers are deliberately omitted.
     access_log /dev/stdout portal_upstream;
     access_log /var/log/securehr/employee-search.log employee_search if=$employee_search_eligible;
@@ -42,19 +49,19 @@ http {
 
   server {
     listen 443 ssl;
-    server_name auth.localhost;
+    server_name auth.${SECUREHR_DOMAIN};
     location / { proxy_pass http://keycloak:8080; }
   }
 
   server {
     listen 443 ssl;
-    server_name jenkins.localhost;
+    server_name jenkins.${SECUREHR_DOMAIN};
     location / { proxy_pass http://jenkins:8080; }
   }
 
   server {
     listen 443 ssl;
-    server_name gitea.localhost;
+    server_name gitea.${SECUREHR_DOMAIN};
     client_max_body_size 100m;
     add_header Strict-Transport-Security "max-age=31536000" always;
     add_header X-Content-Type-Options nosniff always;
@@ -64,7 +71,7 @@ http {
       set $gitea_upstream http://gitea:3000;
       proxy_pass $gitea_upstream;
       proxy_http_version 1.1;
-      # Re-declare headers here (see portal.localhost); Upgrade/Connection carry Gitea's live-update WebSocket.
+      # Re-declare headers here (see the portal server above); Upgrade/Connection carry Gitea's live-update WebSocket.
       proxy_set_header Host $host;
       proxy_set_header X-Forwarded-Proto $scheme;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

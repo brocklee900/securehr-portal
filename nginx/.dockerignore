@@ -1,2 +1,4 @@
 # Certificates are mounted at runtime; keep private keys out of the build context.
 certs/
+# Let's Encrypt private keys and challenge files (shared server) are mounted at runtime too.
+certbot/

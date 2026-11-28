@@ -47,6 +47,8 @@ cp .env.example .env              # then change every change-me-... value
 bash scripts/gen-certs.sh         # creates nginx/certs/securehr.pem and securehr-key.pem
 cp "$(mkcert -CAROOT)/rootCA.pem" jenkins/rootCA.pem
 ```
+Running on the shared cloud server instead of a laptop? Skip `mkcert` and see step 8.
+
 Already have certificates from an earlier setup? Re-run `bash scripts/gen-certs.sh` (it now also covers `gitea.localhost`; your CA stays the same) and `docker compose restart nginx`.
 
 Avoid `@ : / # %` in passwords (they end up in connection URLs). The last line lets Jenkins trust your local certificate; the file is machine-specific and git-ignored. On Windows, if `mkcert` isn't on your PATH: `cp ~/AppData/Local/mkcert/rootCA.pem jenkins/rootCA.pem`.
@@ -175,6 +177,53 @@ If Git reports an unknown certificate authority: `git config http.sslCAInfo "$(m
 
 **Manual Keycloak client** (only if the script could not reach Keycloak's admin API): in the **securehr** realm, Clients → Create: ID `gitea`, Client authentication **On**, Standard flow only, Valid redirect URI `https://gitea.localhost/user/oauth2/keycloak/callback`; Credentials tab secret = `GITEA_OIDC_SECRET` from `.env`; Client scopes → `gitea-dedicated` → Add mapper → By configuration → **User Realm Role**: Name `roles`, Token Claim Name `roles`, Multivalued On, Add to ID token / access token / userinfo On. Then re-run the script (it skips what exists).
 
+### 8. Shared cloud server (AWS EC2 + free DuckDNS name)
+
+The abstract calls for a shared cloud server for Keycloak, Jenkins and Postgres. The whole stack runs on one EC2 instance (they depend on each other, and the compose file already wires them together), and the team uses it in the browser at real HTTPS addresses. Laptops keep running the local stack exactly as before: nothing below changes them.
+
+Everything hostname-related comes from `SECUREHR_DOMAIN` in `.env` (`localhost` by default): the sites are `portal.`, `auth.`, `gitea.` and `jenkins.` + that name.
+
+**8a. Free name.** Sign in at https://www.duckdns.org and add a subdomain, e.g. `myteam`, giving `myteam.duckdns.org`. DuckDNS also answers for every name under it (`portal.myteam.duckdns.org` and so on), so one entry covers all four sites. You fill in its IP in 8b.
+
+**8b. Server (AWS console → EC2).**
+1. Launch an instance: Ubuntu 24.04, `t3.large` (8 GB; the stack runs about ten containers including Keycloak and Jenkins), 30 GB disk, with a key pair you keep.
+2. Security group: **443** and **80** from anywhere (80 is needed for Let's Encrypt and redirects), **22** from your team's IP addresses only. Nothing else: Postgres and LDAP stay private.
+3. Elastic IPs → allocate one → associate it with the instance, so the address survives stop/start. Put that address in DuckDNS (8a) and save.
+
+Cost: about $0.08/hour, roughly $60/month if left running. **Stop the instance when nobody is using it**, and set a billing alert. Check whether the course offers AWS Academy or education credits.
+
+**8c. Install and configure** (on the server: `ssh -i yourkey.pem ubuntu@myteam.duckdns.org`):
+```bash
+curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker ubuntu && exit   # log in again afterwards
+git clone <your repo URL> securehr-portal && cd securehr-portal
+cp .env.example .env && nano .env
+```
+In `.env`: set `SECUREHR_DOMAIN=myteam.duckdns.org`, `KEYCLOAK_COMMAND=start`, `FRONTEND_TARGET=prod`, `LETSENCRYPT_EMAIL=` your address, and replace **every** `change-me-...` value with a long random one (`openssl rand -hex 24`). This server is on the internet. No mkcert and no `rootCA.pem` are needed: Let's Encrypt certificates are trusted everywhere.
+
+**8d. Certificates, data, start.**
+```bash
+bash scripts/get-public-certs.sh          # trusted HTTPS for all four names; also starts the stack
+bash scripts/migrate_mysql_to_pg.sh       # step 2, same as on a laptop (5 to 10 minutes)
+docker compose stop mysql
+docker compose up -d --build
+```
+Renew the certificates by re-running `get-public-certs.sh` (they last 90 days; it renews in the last 30). The script prints a monthly `cron` line for this.
+
+**8e. Keycloak, Jenkins, Gitea.** Same as steps 4 to 7 with your domain instead of `localhost` (e.g. https://auth.myteam.duckdns.org/admin, https://jenkins.myteam.duckdns.org). Then, before telling anyone the address:
+- Give the LDAP demo users real passwords, or replace them with your team's accounts in `ldap/bootstrap.ldif` before first start. `Passw0rd!` must not be on the internet.
+- Disable or re-password `admin.local` in Keycloak.
+- Jenkins' Docker access (step 5) is effectively root on the server: limit **Job/Build** to HR admins (security review, finding 7).
+
+**8f. Using it as a team.**
+- Everyone: https://portal.myteam.duckdns.org and the other three sites.
+- Code: push to Gitea on the server (step 7). Jenkins builds on each push.
+- Database: Postgres is not exposed. To use a local tool (psql, DBeaver), open an SSH tunnel and connect to `localhost:5433`:
+  ```bash
+  ssh -i yourkey.pem -N -L 5433:127.0.0.1:5432 ubuntu@myteam.duckdns.org
+  ```
+- Deploy new code on the server: `git pull && docker compose up -d --build`.
+- Stop/start the EC2 instance from the console when not in use; the stack restarts on boot (`restart: unless-stopped`), but re-run the Jenkins `chmod` from step 5 if builds need Docker.
+
 ### Stopping and resuming
 Data lives in Docker volumes and survives restarts.
 ```bash
@@ -214,7 +263,7 @@ The same script runs as the **Integration tests** stage in Jenkins (results publ
 |---|---|
 | `Cwd must be an absolute path` during migration | Git Bash path rewriting: `export MSYS_NO_PATHCONV=1` first. |
 | `$'\r': command not found` | CRLF line endings: `sed -i 's/\r$//' .env scripts/*.sh` |
-| Vite says `Blocked request. This host ("frontend") is not allowed` | `location /` in `nginx/nginx.conf` must re-declare its `proxy_set_header` lines (already done). `docker compose restart nginx`. |
+| Vite says `Blocked request. This host ("frontend") is not allowed` | `location /` in `nginx/templates/nginx.conf.template` must re-declare its `proxy_set_header` lines (already done). `docker compose restart nginx`. |
 | Cannot sign in as `admin.local` | In the **securehr** realm: Users → `admin.local` → Credentials → Reset password (Temporary off); confirm group `hr-admins`. The Keycloak admin account lives in `master` and cannot sign in to the portal. |
 | `hr_admin` role missing, or role mapping empty | Wrong realm (`master`), "Hide inherited roles" is ticked, or LDAP groups were not synced (step 4c). |
 | Signed in but "No portal role assigned" | The user has no group carrying a realm role. |
@@ -229,6 +278,10 @@ The same script runs as the **Integration tests** stage in Jenkins (results publ
 | Change salary box says "Cannot check whether this employee is an HR admin" (503) | The backend cannot bind to LDAP as `cn=readonly`: `LDAP_READONLY_PASSWORD` missing from `.env`, or LDAP was initialised before the read-only account existed (see "Already set up before salary changes existed?" under step 2). `docker compose logs backend`. |
 | Changing a salary fails with `permission denied` or a server error | `db/post/05_hr_salary_adjust.sql` has not been applied (command under step 2). |
 | Applying `05_hr_salary_adjust.sql` says employees "already have more than one current salary" | The data has two open (`9999-01-01`) salaries for those people. Fix them as `postgres` (close all but the latest), then re-run. |
+| `get-public-certs.sh`: name "does not resolve" or "points at" another address | The DuckDNS IP is not this server's Elastic IP (step 8a/8b). Fix it on duckdns.org, wait a minute, re-run. |
+| `get-public-certs.sh`: Let's Encrypt says `Timeout during connect` or `unauthorized` | Port 80 is not open to the internet in the EC2 security group, or Nginx is not running (`docker compose ps nginx`). |
+| Server: browser says the certificate is for `temporary` | The Let's Encrypt step did not finish: re-run `bash scripts/get-public-certs.sh` and read its output. |
+| Server: login redirects to `auth.localhost` | `SECUREHR_DOMAIN` is missing from `.env` on the server, or Keycloak's realm was imported before it was set. Set it, then `docker compose up -d`; for the realm, update the client redirect URIs in Keycloak (Clients → `securehr-portal`, `jenkins`) or recreate Keycloak's data. |
 | Integration script: `Postgres did not start` | Docker Desktop not running or out of resources; the script prints the container log. |
 | pgloader cannot log in to MySQL | pgloader cannot use MySQL 8's default auth; compose pins `mysql:8.0` with `mysql_native_password`. |
 | Gitea sign-in: `x509: certificate signed by unknown authority` | `gitea/rootCA.pem` was missing or stale when the image was built: `cp jenkins/rootCA.pem gitea/rootCA.pem && docker compose up -d --build gitea`. |
@@ -245,13 +298,13 @@ The same script runs as the **Integration tests** stage in Jenkins (results publ
 |---|---|
 | `docker-compose.yml`, `.env.example` | Full stack |
 | `db/init/` | First-start Postgres setup: app role, `app.audit_log` |
-| `db/post/` | After migration: indexes and RLS (`02_`), audit-log access rules (`03_`), HR-admin inserts and the employee-number sequence (`04_`), pgloader config |
-| `scripts/` | Certificates, migration, validation, integration tests, Gitea/Keycloak setup (`setup-gitea.sh`) |
+| `db/post/` | After migration: indexes and RLS (`02_`), audit-log access rules (`03_`), HR-admin inserts and the employee-number sequence (`04_`), salary changes (`05_`), pgloader config |
+| `scripts/` | Certificates (`gen-certs.sh` for laptops, `get-public-certs.sh` for the shared server), migration, validation, integration tests, Gitea/Keycloak setup (`setup-gitea.sh`) |
 | `ldap/bootstrap.ldif`, `keycloak/` | Demo directory, realm import file, federation guide |
-| `nginx/` | TLS reverse proxy |
+| `nginx/` | TLS reverse proxy; `templates/nginx.conf.template` gets the domain filled in at startup |
 | `backend/` | FastAPI app (`app/`), unit tests, integration tests (`tests/integration/`), `Dockerfile`, `Dockerfile.test` |
 | `frontend/` | React/TS: login, search, detail, departments, audit log, new employee (HR admins) |
-| `gitea/` | Gitea image (official image plus the local CA); configured by environment variables in `docker-compose.yml` |
+| `gitea/` | Gitea image (official image plus the local CA when present); configured by environment variables in `docker-compose.yml` |
 | `jenkins/`, `Jenkinsfile` | Jenkins image and config-as-code (OIDC login, roles); pipeline definition |
 | `docs/` | Architecture notes, milestone status, security review |
 

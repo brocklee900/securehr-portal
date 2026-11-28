@@ -22,3 +22,4 @@ gitea/rootCA.pem
 monitoring/secrets/*
 !monitoring/secrets/.gitkeep
 monitoring/alertmanager/*.local.yml
+nginx/certbot/conf/
