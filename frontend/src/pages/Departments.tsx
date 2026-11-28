@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Department } from "../api";
-import { Table } from "antd";
+import { Table, TableProps } from "antd";
 
 export default function Departments() {
   const [depts, setDepts] = useState<Department[]>([]);
@@ -10,9 +10,10 @@ export default function Departments() {
     key: string;
     dept_name: string;
     dept_no: string;
+    headcount: number;
   }
   
-  const columns: TableProps<DataType>= [
+  const columns: TableProps<DataType>["columns"] = [
     {
       title: "Code",
       dataIndex: "dept_no",
@@ -40,7 +41,7 @@ export default function Departments() {
         ))}</tbody>
       </table> */}
 
-      <Table<DataType> columns={columns} dataSource={depts} />
+      <Table<DataType> columns={columns} dataSource={depts.map((d) => ({ ...d, key: d.dept_no }))} />
 
     </section>
   );

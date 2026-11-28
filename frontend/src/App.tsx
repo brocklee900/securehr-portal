@@ -1,27 +1,14 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
 import { currentRole, keycloak } from "./auth";
 import Audit from "./pages/Audit";
 import Departments from "./pages/Departments";
 import EmployeeDetail from "./pages/EmployeeDetail";
 import EmployeeSearch from "./pages/EmployeeSearch";
 import NewEmployee from "./pages/NewEmployee";
-import { BreadcrumbProps, Breadcrumb } from 'antd';
-import { createStaticStyles } from 'antd-style';
+import { Breadcrumb } from 'antd';
 
 export default function App() {
   const role = currentRole();
-  const classNames = createStaticStyles(({ css }) => ({
-        root: css`
-          padding: 8px;
-          border-radius: 4px;
-        `,
-        item: css`
-          color: #1890ff;
-        `,
-        separator: css`
-          color: rgba(0, 0, 0, 0.45);
-        `,
-      }));
   
   const breadItems = [
     {title: "Employees", href:"/"},

@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, EmployeeRow, Salary, Title } from "../api";
 import { canSeeSalary, Role } from "../auth";
 import SalaryChange from "./SalaryChange";
-import { Card, Divider, Listy, Space, Splitter } from "antd";
+import { Card, Listy, Space } from "antd";
 
 const CURRENT = "9999-01-01";
 

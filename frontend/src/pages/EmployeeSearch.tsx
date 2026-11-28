@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Department, EmployeeRow, EmployeeSortColumn, SortDirection } from "../api";
-import { Flex,  Table, TableProps, Tag } from "antd";
+import { Table, TableProps } from "antd";
 
 
 const PAGE_SIZE = 25;

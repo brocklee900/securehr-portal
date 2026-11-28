@@ -23,3 +23,6 @@ monitoring/secrets/*
 !monitoring/secrets/.gitkeep
 monitoring/alertmanager/*.local.yml
 nginx/certbot/conf/
+
+# Patch files shared during development
+*.patch

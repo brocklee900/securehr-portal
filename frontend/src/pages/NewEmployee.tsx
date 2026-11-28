@@ -1,8 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useState } from "react";
 import { Form, Link } from "react-router-dom";
 import { api, ApiError, CreatedEmployee, Department } from "../api";
-import { Button, DatePicker, Input, Select } from "antd";
-import type { FormProps } from 'antd';
 
 // Same limits as the API (backend/app/routers/hr_admin.py). They are repeated here only to give instant feedback;
 // the API checks everything again and is the one that decides.
